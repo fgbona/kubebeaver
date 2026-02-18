@@ -1,15 +1,14 @@
 """Alembic environment configuration."""
+import os
 from logging.config import fileConfig
+from pathlib import Path
+import sys
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-
-# Import app config and models
-import sys
-from pathlib import Path
 
 # Add backend directory to path
 backend_dir = Path(__file__).parent.parent
@@ -38,8 +37,8 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    """Get database URL from settings."""
-    database_url = settings.database_url
+    """Get database URL for Alembic. Prefer ALEMBIC_DATABASE_URL when running migrations from host (e.g. localhost instead of Docker host 'mysql')."""
+    database_url = os.environ.get("ALEMBIC_DATABASE_URL") or settings.database_url
 
     if database_url:
         # Convert async drivers to sync for Alembic
@@ -50,7 +49,6 @@ def get_url() -> str:
         return database_url
     else:
         # SQLite
-        import os
         db_path = settings.history_db_path
         if not os.path.isabs(db_path):
             db_path = os.path.join(backend_dir, db_path)
