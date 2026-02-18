@@ -18,7 +18,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - **Automatic data collection**: Gathers pod/Deployment/StatefulSet/Node details, events, logs, and status
 - **LLM-powered analysis**: Uses Groq or OpenAI-compatible APIs to generate intelligent diagnostics
 - **Security**: Automatic sanitization of secrets, tokens, and sensitive data before sending to LLM
-- **Analysis history**: SQLite database stores all analyses for review and comparison
+- **Analysis history**: SQLite database (default) or MySQL/Postgres stores all analyses for review and comparison
 - **Performance metrics**: Tracks token usage and response time for each analysis
 - **Multi-context support**: Works with multiple Kubernetes contexts
 - **In-cluster deployment**: Can run inside Kubernetes with RBAC for least-privilege access
@@ -157,12 +157,20 @@ kubectl create secret generic kubebeaver-secrets -n kubebeaver \
 | `MAX_EVIDENCE_CHARS` | Max characters of evidence sent to LLM | 60000 |
 | `IN_CLUSTER` | Set to `true` when running inside Kubernetes | `false` |
 | `KUBECONFIG` | Path to kubeconfig (local/dev) | `~/.kube/config` |
-| `HISTORY_DB_PATH` | SQLite path for analysis history (relative to backend dir or absolute) | `data/kubebeaver.db` |
+| `HISTORY_DB_PATH` | SQLite path for analysis history (used when DATABASE_URL is not set) | `data/kubebeaver.db` |
+| `DATABASE_URL` | External database URL (optional; MySQL or Postgres). If set, overrides HISTORY_DB_PATH | - |
 | `REDIS_URL` | Redis URL for response cache (optional; leave empty to disable cache) | - |
 | `CACHE_TTL_CONTEXTS` | Cache TTL for context list (seconds) | 60 |
 | `CACHE_TTL_NAMESPACES` | Cache TTL for namespace list (seconds) | 60 |
 | `CACHE_TTL_RESOURCES` | Cache TTL for resource list (seconds) | 30 |
 | `CACHE_TTL_ANALYZE` | Cache TTL for analysis results (seconds) | 300 |
+
+**Database:**  
+By default, KubeBeaver uses SQLite (stored in `kubebeaver-history` volume). To use MySQL or Postgres, set `DATABASE_URL` in `.env`:
+- MySQL: `mysql+aiomysql://user:password@host:3306/database`
+- Postgres: `postgresql+asyncpg://user:password@host:5432/database`
+
+MySQL is started by default with `docker compose up`. To use it, set `DATABASE_URL=mysql+aiomysql://kubebeaver:kubebeaver@mysql:3306/kubebeaver` in `.env`.
 
 **Redis cache (optional):**  
 With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in `.env` to cache API responses (contexts, namespaces, resources, and analysis results). If unset, no cache is used.

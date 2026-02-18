@@ -8,6 +8,7 @@ from app.logging_config import setup_logging
 from app.routers.api import router
 from app.history import init_db
 from app.cache import close as cache_close
+from app.db.factory import close_database
 
 
 @asynccontextmanager
@@ -16,6 +17,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     yield
     await cache_close()
+    await close_database()
 
 
 app = FastAPI(

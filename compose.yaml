@@ -21,6 +21,7 @@ services:
       - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-120}
       - MAX_EVIDENCE_CHARS=${MAX_EVIDENCE_CHARS:-60000}
       - REDIS_URL=${REDIS_URL:-}
+      - DATABASE_URL=${DATABASE_URL:-}
     volumes:
       - ${KUBECONFIG:-$HOME/.kube/config}:/tmp/kubeconfig:ro
       - kubebeaver-history:/app/data
@@ -62,6 +63,27 @@ services:
       retries: 3
       start_period: 5s
 
+  mysql:
+    container_name: kubebeaver-mysql
+    networks:
+      - kubebeaver-net
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-kubebeaver}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-kubebeaver}
+      - MYSQL_USER=${MYSQL_USER:-kubebeaver}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-kubebeaver}
+    ports:
+      - "33064:3306"
+    volumes:
+      - kubebeaver-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-kubebeaver}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 networks:
   kubebeaver-net:
     name: kubebeaver-net
@@ -71,3 +93,5 @@ volumes:
   kubebeaver-history:
     name: kubebeaver-history
     external: true
+  kubebeaver-mysql-data:
+    name: kubebeaver-mysql-data

@@ -28,8 +28,9 @@ class Settings(BaseSettings):
     # In-cluster: set IN_CLUSTER=true when running inside Kubernetes
     in_cluster: bool = False
 
-    # History
-    history_db_path: str = "data/kubebeaver.db"
+    # History / Database
+    history_db_path: str = "data/kubebeaver.db"  # Used when DATABASE_URL is not set (SQLite)
+    database_url: str = ""  # Optional: e.g. mysql+aiomysql://user:pass@host/db or postgresql+asyncpg://user:pass@host/db
 
     # Redis cache (optional: leave empty to disable cache)
     redis_url: str = ""  # e.g. redis://localhost:6379/0
