@@ -10,6 +10,7 @@ export type HealthResponse = {
   status: string;
   kube_connected: boolean;
   llm_configured: boolean;
+  llm_provider: string; // "groq" | "openai_compatible" for display as Groq / Local
 };
 
 export type RootCauseItem = {
@@ -48,6 +49,48 @@ export type HistoryItem = {
   kind: string;
   name: string;
   error: string | null;
+};
+
+// Scan
+export type ScanRequest = {
+  context?: string;
+  scope: "namespace" | "cluster";
+  namespace?: string;
+  include_logs?: boolean;
+};
+export type ScanFindingItem = {
+  id: string;
+  severity: string;
+  category: string;
+  title: string;
+  description: string | null;
+  affected_refs: { kind?: string; namespace?: string; name?: string }[];
+  evidence_refs: string[];
+  suggested_commands: string[];
+  evidence_snippet: string | null;
+  occurred_at?: string | null;
+};
+export type ScanResponse = {
+  id: string;
+  created_at?: string | null;
+  summary_markdown: string | null;
+  error: string | null;
+  findings: ScanFindingItem[];
+  counts: Record<string, number>;
+  duration_ms?: number | null;
+};
+export type ScanListItem = {
+  id: string;
+  created_at: string;
+  context: string | null;
+  scope: string;
+  namespace: string | null;
+  findings_count: number;
+  error: string | null;
+};
+export type ScanDetail = ScanListItem & {
+  summary_markdown: string | null;
+  findings: ScanFindingItem[];
 };
 
 async function get<T>(
@@ -111,4 +154,11 @@ export const api = {
         evidence_summary?: string;
       }
     >(`/history/${id}`),
+  scan: (body: ScanRequest) => post<ScanResponse>("/scan", body),
+  scans: (limit?: number) =>
+    get<ScanListItem[]>(
+      "/scans",
+      limit != null ? { limit: String(limit) } : undefined,
+    ),
+  scanGet: (id: string) => get<ScanDetail>(`/scans/${id}`),
 };

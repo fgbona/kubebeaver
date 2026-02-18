@@ -45,6 +45,19 @@ h1, h2, h3 {
   padding-left: 1.5em;
 }
 
+/* Severity colors in scan summary */
+.scan-summary-counts {
+  margin: 0.5em 0;
+  font-weight: 600;
+}
+.scan-summary-counts .severity-critical { color: #b71c1c; }
+.scan-summary-counts .severity-high     { color: #e65100; }
+.scan-summary-counts .severity-medium   { color: #f57c00; }
+.scan-summary-counts .severity-low     { color: #1565c0; }
+.scan-summary-counts .severity-info     { color: #616161; }
+.scan-summary-counts .severity-sep       { color: #757575; margin: 0 4px; }
+.scan-summary-total { margin: 0.5em 0; }
+
 .evidence-block {
   background: #fafafa;
   border: 1px solid #e0e0e0;
@@ -57,6 +70,15 @@ h1, h2, h3 {
   max-height: 400px;
   overflow: auto;
 }
+
+/* jq-style JSON syntax highlighting */
+.evidence-block .jq-key   { color: #881391; }
+.evidence-block .jq-string { color: #1a1aa6; }
+.evidence-block .jq-number { color: #1c00cf; }
+.evidence-block .jq-bool   { color: #1c00cf; }
+.evidence-block .jq-null  { color: #808080; }
+.evidence-block .jq-punct  { color: #1a1a1a; }
+.evidence-block .jq-raw   { color: #1a1a1a; }
 
 .error-box {
   background: #fde8e8;
@@ -93,6 +115,17 @@ button:disabled {
   background: #9e9e9e;
   border-color: #9e9e9e;
   cursor: not-allowed;
+}
+.tab-bar button.primary {
+  background: #1565c0;
+  border-color: #0d47a1;
+}
+.tab-bar button:not(.primary) {
+  background: white;
+  color: #1976d2;
+}
+.tab-bar button:not(.primary):hover {
+  background: #e3f2fd;
 }
 
 select, input[type="text"] {
