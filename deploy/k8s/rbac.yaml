@@ -1,0 +1,59 @@
+# Least-privilege RBAC for KubeBeaver backend.
+# The backend needs to:
+# - List contexts: not applicable in-cluster (single context)
+# - List namespaces: list, get namespaces
+# - List pods/deployments/statefulsets per namespace: list, get
+# - List nodes: list, get nodes
+# - Read pod/deployment/statefulset/node details: get
+# - List events (namespace and optional cluster): list events
+# - Read pod logs: get pods/log
+# Optional: metrics.k8s.io for pod/node metrics (best-effort)
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubebeaver
+  namespace: kubebeaver
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubebeaver-reader
+rules:
+  # Namespaces: list and get for namespace selector
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+  # Pods: describe, list, get logs
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+  # Events: for pods and workloads
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list"]
+  # Nodes: list and describe
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  # Deployments and StatefulSets
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list"]
+  # Optional: metrics (if metrics-server is installed)
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubebeaver-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubebeaver-reader
+subjects:
+  - kind: ServiceAccount
+    name: kubebeaver
+    namespace: kubebeaver

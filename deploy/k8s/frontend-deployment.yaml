@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubebeaver-frontend
+  namespace: kubebeaver
+  labels:
+    app: kubebeaver-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubebeaver-frontend
+  template:
+    metadata:
+      labels:
+        app: kubebeaver-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: kubebeaver-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: kubebeaver
+spec:
+  selector:
+    app: kubebeaver-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http

@@ -1,0 +1,47 @@
+#version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - KUBECONFIG=/tmp/kubeconfig
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai_compatible}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.1-8b-instant}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-llama3.2}
+      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-120}
+      - MAX_EVIDENCE_CHARS=${MAX_EVIDENCE_CHARS:-60000}
+    volumes:
+      - ${KUBECONFIG:-$HOME/.kube/config}:/tmp/kubeconfig:ro
+      - kubebeaver-history:/app/data
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health', timeout=2).raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  kubebeaver-history:
+    name: kubebeaver-history
+    external: true
