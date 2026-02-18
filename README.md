@@ -10,7 +10,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - **Likely root causes** with confidence and evidence references
 - A **checklist of recommended actions**
 - **Suggested kubectl commands** to validate or fix
-- **Raw evidence** (sanitized) for transparency
+- **Raw evidence** (sanitized) for transparency, with **jq-style JSON syntax highlighting** and preserved formatting for easier debugging
 - **Usage metrics**: tokens consumed and response time displayed in the UI
 
 ## Key features
@@ -22,7 +22,8 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - **Performance metrics**: Tracks token usage and response time for each analysis
 - **Multi-context support**: Works with multiple Kubernetes contexts
 - **In-cluster deployment**: Can run inside Kubernetes with RBAC for least-privilege access
-- **Cluster health scan**: On-demand namespace or cluster-wide scan for failure signals (failing pods, replica mismatches, node pressure) with prioritized findings and suggested kubectl commands
+- **Cluster health scan**: On-demand namespace or cluster-wide scan for failure signals (failing pods, replica mismatches, node pressure) with prioritized findings, **colored severity** (Critical/High/Medium/Low/Info), **per-finding timestamps** (when the issue occurred), and suggested kubectl commands
+- **Evidence formatting**: When "Include logs in evidence" is enabled, scan evidence (e.g. `pod_logs`) is **pretty-printed and syntax-highlighted** (jq-style) in the UI for easier debugging
 
 ## Roadmap
 
@@ -36,6 +37,10 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - ✅ Multi-context support
 - ✅ In-cluster deployment with RBAC
 - ✅ **Cluster health scan (on-demand)**: Scan a namespace or the whole cluster for failure signals; view findings by severity/category with evidence and suggested commands
+- ✅ **Colored severity** in scan summary and finding list (Critical=red, High=orange, Medium=yellow, Low=blue, Info=gray)
+- ✅ **Issue timestamps** in scan findings (when each finding occurred, from pod/node evidence; falls back to scan time when not available)
+- ✅ **jq-style JSON highlighting** for Raw evidence (Analyze) and Evidence (Scan), with pretty-printing when evidence includes logs
+- ✅ **MySQL/Postgres + Alembic**: Optional external DB with migrations; SQLite remains the default
 
 ### Next (v2.0 - Q2 2026)
 
@@ -47,7 +52,7 @@ See [Milestone v2.0.0-alpha], [Milestone v2.0.0-beta], [Milestone v2.0.0-rc] for
 - [ ] **Scheduled Scans**: Automated health checks (daily/weekly)
 - [ ] **Webhooks**: Slack notifications and generic webhook integrations
 - [ ] **Export**: JSON, Markdown, and PDF export for incidents and analyses
-- [ ] **MySQL Support**: Production-grade database with Alembic migrations (SQLite fallback still available)
+- [ ] **MySQL/Postgres hardening**: Additional migrations and tooling (Alembic and optional MySQL/Postgres are already supported)
 
 ### Later (v2.1+)
 
@@ -100,7 +105,7 @@ Analysis history is stored in the `kubebeaver-history` volume and persists acros
 
 In the UI (http://localhost:8080): choose context, namespace, target type (Pod / Deployment / StatefulSet / Node), resource name, then **Analyze**. View the markdown result and expand **Raw evidence** if needed.
 
-Use the **Scan** tab to run a cluster health scan: pick scope (namespace or cluster), select a namespace when scoping to one, optionally enable **Include logs in evidence**, then **Scan**. Results show a summary (counts by severity), a filterable list of findings, and a detail panel (evidence + suggested kubectl commands) when you click a finding.
+Use the **Scan** tab to run a cluster health scan: pick scope (namespace or cluster), select a namespace when scoping to one, optionally enable **Include logs in evidence**, then **Scan**. Results show a summary with **colored severity counts** (Critical/High/Medium/Low/Info), a filterable list of findings (each with a **timestamp** for when the issue occurred), and a detail panel with **formatted, syntax-highlighted evidence** and suggested kubectl commands when you click a finding.
 
 ---
 
@@ -169,6 +174,7 @@ kubectl create secret generic kubebeaver-secrets -n kubebeaver \
 | `CACHE_TTL_ANALYZE` | Cache TTL for analysis results (seconds) | 300 |
 | `SCAN_MAX_FINDINGS` | Max findings per scan (payload bound) | 200 |
 | `SCAN_PENDING_MINUTES` | Pod Pending longer than this (minutes) is reported | 5 |
+| `ALEMBIC_DATABASE_URL` | Database URL for Alembic when running migrations on the host (e.g. `mysql+pymysql://...@localhost:33064/...`); used instead of `DATABASE_URL` so host can reach DB | - |
 
 **Database:**  
 By default, KubeBeaver uses SQLite (stored in `kubebeaver-history` volume). To use MySQL or Postgres, set `DATABASE_URL` in `.env`:
@@ -176,6 +182,11 @@ By default, KubeBeaver uses SQLite (stored in `kubebeaver-history` volume). To u
 - Postgres: `postgresql+asyncpg://user:password@host:5432/database`
 
 MySQL is started by default with `docker compose up`. To use it, set `DATABASE_URL=mysql+aiomysql://kubebeaver:kubebeaver@mysql:3306/kubebeaver` in `.env`.
+
+**Running Alembic migrations from the host:**  
+If `DATABASE_URL` uses the Docker hostname `mysql`, that hostname does not resolve when you run `alembic upgrade head` on your machine. Set `ALEMBIC_DATABASE_URL` to the same URL with `localhost` and the host-exposed port (e.g. `33064`):  
+`ALEMBIC_DATABASE_URL=mysql+pymysql://kubebeaver:kubebeaver@localhost:33064/kubebeaver`  
+Then run: `cd backend && uv run alembic upgrade head`
 
 **Redis cache (optional):**  
 With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in `.env` to cache API responses (contexts, namespaces, resources, and analysis results). If unset, no cache is used.
@@ -194,9 +205,9 @@ With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in 
   - `response_time_ms`: Response time in milliseconds (displayed as seconds if ≥1000ms)
 - **GET /api/history** – List recent analyses (saved automatically to SQLite)
 - **GET /api/history/{id}** – Get one analysis by id with full details
-- **POST /api/scan** – Run cluster health scan. Body: `{ "context?", "scope": "namespace"|"cluster", "namespace?" (required when scope=namespace), "include_logs?" }`. Returns: `id`, `summary_markdown`, `error?`, `findings[]`, `counts` (by severity).
+- **POST /api/scan** – Run cluster health scan. Body: `{ "context?", "scope": "namespace"|"cluster", "namespace?" (required when scope=namespace), "include_logs?" }`. Returns: `id`, `created_at`, `summary_markdown`, `error?`, `findings[]`, `counts` (by severity), `duration_ms?`.
 - **GET /api/scans** – List recent scans (`?limit=50`).
-- **GET /api/scans/{id}** – Get scan by id with full findings and summary.
+- **GET /api/scans/{id}** – Get scan by id with full findings and summary. Each finding includes `occurred_at?` (ISO timestamp when the issue happened, from pod/node evidence) when available.
 
 ---
 
@@ -255,8 +266,8 @@ The UI displays metrics in the result header: **"Result - 1,234 tokens - 2.3s"**
 2. **Open Scan tab:** http://localhost:8080 → click **Scan**.
 3. **Run a scan:** Choose scope **Namespace**, select a namespace, click **Scan**. Expect a summary (e.g. counts by severity) and a list of findings (or “Total findings: 0” if the namespace is healthy).
 4. **List scans:** `curl -s http://localhost:8000/api/scans | jq` (or use the “Recent scans” list in the UI). Expect an array of scan objects with `id`, `created_at`, `scope`, `namespace`, `findings_count`, `error?`.
-5. **Get scan detail:** `curl -s http://localhost:8000/api/scans/<id> | jq` (replace `<id>` with a scan id from step 4). Expect `summary_markdown`, `findings[]` (each with `severity`, `category`, `title`, `description`, `affected_refs`, `suggested_commands`, `evidence_snippet?`).
-6. **Click a finding** in the UI: detail panel shows evidence (if collected) and suggested kubectl commands.
+5. **Get scan detail:** `curl -s http://localhost:8000/api/scans/<id> | jq` (replace `<id>` with a scan id from step 4). Expect `created_at`, `summary_markdown`, `findings[]` (each with `severity`, `category`, `title`, `description`, `affected_refs`, `suggested_commands`, `evidence_snippet?`, `occurred_at?`).
+6. **Click a finding** in the UI: detail panel shows formatted, syntax-highlighted evidence (if collected) and suggested kubectl commands. When "Include logs in evidence" was used, `pod_logs` and other JSON evidence are pretty-printed and colored.
 
 ---
 
