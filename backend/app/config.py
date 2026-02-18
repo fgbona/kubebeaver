@@ -31,5 +31,12 @@ class Settings(BaseSettings):
     # History
     history_db_path: str = "data/kubebeaver.db"
 
+    # Redis cache (optional: leave empty to disable cache)
+    redis_url: str = ""  # e.g. redis://localhost:6379/0
+    cache_ttl_contexts: int = 60  # seconds
+    cache_ttl_namespaces: int = 60
+    cache_ttl_resources: int = 30
+    cache_ttl_analyze: int = 300  # 5 minutes
+
 
 settings = Settings()

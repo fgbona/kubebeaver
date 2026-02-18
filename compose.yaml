@@ -2,6 +2,8 @@
 
 services:
   backend:
+    networks:
+      - kubebeaver-net
     build: ./backend
     ports:
       - "8000:8000"
@@ -15,6 +17,7 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL:-llama3.2}
       - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-120}
       - MAX_EVIDENCE_CHARS=${MAX_EVIDENCE_CHARS:-60000}
+      - REDIS_URL=${REDIS_URL:-}
     volumes:
       - ${KUBECONFIG:-$HOME/.kube/config}:/tmp/kubeconfig:ro
       - kubebeaver-history:/app/data
@@ -27,7 +30,21 @@ services:
       retries: 3
       start_period: 10s
 
+  redis:
+    networks:
+      - kubebeaver-net
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   frontend:
+    networks:
+      - kubebeaver-net
     build: ./frontend
     ports:
       - "8080:80"
@@ -40,6 +57,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
+
+networks:
+  kubebeaver-net:
+    name: kubebeaver-net
+    external: true
 
 volumes:
   kubebeaver-history:
