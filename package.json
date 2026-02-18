@@ -1,0 +1,10 @@
+{
+  "name": "kubebeaver",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kubernetes troubleshooting assistant - collects cluster signals and uses an LLM for diagnostics",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fgbona/kubebeaver"
+  }
+}
