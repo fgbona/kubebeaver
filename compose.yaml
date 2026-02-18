@@ -1,5 +1,7 @@
 #version: "3.9"
 
+name: kubebeaver
+
 services:
   backend:
     container_name: kubebeaver-backend
@@ -52,8 +54,7 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
