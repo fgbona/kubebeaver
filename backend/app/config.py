@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     max_events: int = 50
     max_pods_per_workload: int = 3
 
+    # Scan
+    scan_max_findings: int = 200  # Cap findings per scan to bound payload
+    scan_pending_minutes: int = 5  # Pod Pending longer than this = finding
+
     # In-cluster: set IN_CLUSTER=true when running inside Kubernetes
     in_cluster: bool = False
 

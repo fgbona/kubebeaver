@@ -64,3 +64,47 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     kube_connected: bool = False
     llm_configured: bool = False
+    llm_provider: str = ""  # "groq" | "openai_compatible" for display as Groq / Local
+
+
+# --- Scan ---
+
+
+class ScanRequest(BaseModel):
+    context: str | None = None
+    scope: str = "namespace"  # "namespace" | "cluster"
+    namespace: str | None = None
+    include_logs: bool = False
+
+
+class ScanFindingItem(BaseModel):
+    id: str
+    severity: str
+    category: str
+    title: str
+    description: str | None = None
+    affected_refs: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    suggested_commands: list[str] = Field(default_factory=list)
+    evidence_snippet: str | None = None
+    occurred_at: str | None = None  # When the issue happened (ISO), for display
+
+
+class ScanResponse(BaseModel):
+    id: str
+    created_at: str | None = None  # ISO timestamp when scan was run
+    summary_markdown: str | None = None
+    error: str | None = None
+    findings: list[ScanFindingItem] = Field(default_factory=list)
+    counts: dict[str, int] = Field(default_factory=dict)  # by severity
+    duration_ms: int | None = None  # scan execution time
+
+
+class ScanListItem(BaseModel):
+    id: str
+    created_at: str
+    context: str | None
+    scope: str
+    namespace: str | None
+    findings_count: int
+    error: str | None = None

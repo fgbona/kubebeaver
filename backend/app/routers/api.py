@@ -11,12 +11,17 @@ from app.models import (
     AnalysisJson,
     HealthResponse,
     ResourceItem,
+    ScanRequest,
+    ScanResponse,
+    ScanListItem,
+    ScanFindingItem,
     TargetKind,
     TruncationReport,
 )
 from app.k8s_client import list_contexts, list_namespaces, list_resources, check_connection
 from app.analyzer import run_analysis
 from app.history import save_analysis, list_analyses, get_analysis, init_db
+from app.scan_service import execute_and_save_scan, list_scans as list_scans_svc, get_scan as get_scan_svc
 from app.llm import get_llm_provider
 from app.cache import cache_key, get as cache_get, set as cache_set
 
@@ -33,10 +38,12 @@ async def health() -> HealthResponse:
     except Exception:
         pass
     llm = get_llm_provider().is_configured
+    provider = settings.llm_provider if llm else ""  # groq | openai_compatible
     return HealthResponse(
         status="ok",
         kube_connected=kube,
         llm_configured=llm,
+        llm_provider=provider,
     )
 
 
@@ -185,4 +192,67 @@ async def history_get(analysis_id: str) -> dict[str, Any]:
     row = await get_analysis(analysis_id)
     if not row:
         raise HTTPException(status_code=404, detail="Analysis not found")
+    return row
+
+
+# --- Scan ---
+
+
+@router.post("/scan", response_model=ScanResponse)
+async def scan_post(req: ScanRequest) -> ScanResponse:
+    if req.scope not in ("namespace", "cluster"):
+        raise HTTPException(status_code=400, detail="scope must be 'namespace' or 'cluster'")
+    if req.scope == "namespace" and not (req.namespace and req.namespace.strip()):
+        raise HTTPException(status_code=400, detail="namespace required when scope is 'namespace'")
+    context = req.context if req.context and req.context.strip() else None
+    namespace = req.namespace if req.namespace and req.namespace.strip() else None
+    try:
+        scan_id, summary_markdown, findings, counts, scan_error, duration_ms = await execute_and_save_scan(
+            context=context,
+            scope=req.scope,
+            namespace=namespace,
+            include_logs=req.include_logs,
+        )
+    except Exception as e:
+        logger.exception("execute_and_save_scan failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    # Build response with finding ids from persisted scan (we don't have them from save_scan_run)
+    scan_row = await get_scan_svc(scan_id)
+    finding_items = [
+        ScanFindingItem(
+            id=f["id"],
+            severity=f["severity"],
+            category=f["category"],
+            title=f["title"],
+            description=f.get("description"),
+            affected_refs=f.get("affected_refs") or [],
+            evidence_refs=f.get("evidence_refs") or [],
+            suggested_commands=f.get("suggested_commands") or [],
+            evidence_snippet=f.get("evidence_snippet"),
+            occurred_at=f.get("occurred_at"),
+        )
+        for f in (scan_row.get("findings") or [])
+    ]
+    return ScanResponse(
+        id=scan_id,
+        created_at=scan_row.get("created_at"),
+        summary_markdown=summary_markdown,
+        error=scan_error,
+        findings=finding_items,
+        counts=counts,
+        duration_ms=duration_ms,
+    )
+
+
+@router.get("/scans", response_model=list[ScanListItem])
+async def scans_list(limit: int = 50) -> list[ScanListItem]:
+    items = await list_scans_svc(limit=limit)
+    return [ScanListItem(**r) for r in items]
+
+
+@router.get("/scans/{scan_id}")
+async def scan_get(scan_id: str) -> dict[str, Any]:
+    row = await get_scan_svc(scan_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Scan not found")
     return row

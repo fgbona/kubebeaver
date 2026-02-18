@@ -1,11 +1,10 @@
-"""SQLAlchemy models for analysis history."""
+"""SQLAlchemy models for analysis history and scan runs."""
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, String, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import Integer, String, Text, ForeignKey
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -44,3 +43,40 @@ class Analysis(Base):
             "evidence_summary": self.evidence_summary,
             "error": self.error,
         }
+
+
+class ScanRun(Base):
+    """Scan run metadata."""
+
+    __tablename__ = "scan_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    created_at: Mapped[str] = mapped_column(String(30), nullable=False)
+    context: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)  # namespace | cluster
+    namespace: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    summary_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    findings_count: Mapped[int] = mapped_column(Integer, default=0)  # Denormalized for list view
+
+    findings: Mapped[list["ScanFinding"]] = relationship("ScanFinding", back_populates="scan_run", cascade="all, delete-orphan")
+
+
+class ScanFinding(Base):
+    """Single finding from a scan."""
+
+    __tablename__ = "scan_findings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    scan_run_id: Mapped[str] = mapped_column(String(36), ForeignKey("scan_runs.id", ondelete="CASCADE"), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)  # info|low|medium|high|critical
+    category: Mapped[str] = mapped_column(String(30), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    affected_refs: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of {kind, namespace, name}
+    evidence_refs: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of paths
+    suggested_commands: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of kubectl commands
+    evidence_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)  # Truncated sanitized evidence for detail
+    occurred_at: Mapped[str | None] = mapped_column(String(40), nullable=True)  # When the issue happened (ISO)
+
+    scan_run: Mapped["ScanRun"] = relationship("ScanRun", back_populates="findings")
