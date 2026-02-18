@@ -182,11 +182,19 @@ kubectl create secret generic kubebeaver-secrets -n kubebeaver \
 | `IN_CLUSTER` | Set to `true` when running inside Kubernetes | `false` |
 | `KUBECONFIG` | Path to kubeconfig (local/dev) | `~/.kube/config` |
 | `HISTORY_DB_PATH` | SQLite path for analysis history (relative to backend dir or absolute) | `data/kubebeaver.db` |
+| `REDIS_URL` | Redis URL for response cache (optional; leave empty to disable cache) | - |
+| `CACHE_TTL_CONTEXTS` | Cache TTL for context list (seconds) | 60 |
+| `CACHE_TTL_NAMESPACES` | Cache TTL for namespace list (seconds) | 60 |
+| `CACHE_TTL_RESOURCES` | Cache TTL for resource list (seconds) | 30 |
+| `CACHE_TTL_ANALYZE` | Cache TTL for analysis results (seconds) | 300 |
 
 **Note on `HISTORY_DB_PATH`:** 
 - In Docker: defaults to `/app/data/kubebeaver.db` (create a volume to persist)
 - Locally: defaults to `backend/data/kubebeaver.db`
 - Use an absolute path or mount a volume to persist history across container restarts
+
+**Redis cache (optional):**  
+Set `REDIS_URL=redis://localhost:6379/0` to cache API responses (contexts, namespaces, resources, and analysis results). Reduces repeated K8s API and LLM calls. If unset, no cache is used. With Docker Compose, a `redis` service is defined; set `REDIS_URL=redis://redis:6379/0` in `.env` and run `docker compose up -d redis backend frontend` to use it.
 
 ---
 

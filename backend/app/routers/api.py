@@ -18,6 +18,7 @@ from app.k8s_client import list_contexts, list_namespaces, list_resources, check
 from app.analyzer import run_analysis
 from app.history import save_analysis, list_analyses, get_analysis, init_db
 from app.llm import get_llm_provider
+from app.cache import cache_key, get as cache_get, set as cache_set
 
 logger = logging.getLogger(__name__)
 
@@ -41,15 +42,26 @@ async def health() -> HealthResponse:
 
 @router.get("/contexts")
 async def get_contexts() -> list[dict[str, Any]]:
-    return list_contexts()
+    key = cache_key("contexts")
+    cached = await cache_get(key)
+    if cached is not None:
+        return cached
+    data = list_contexts()
+    await cache_set(key, data, settings.cache_ttl_contexts)
+    return data
 
 
 @router.get("/namespaces")
 async def get_namespaces(context: str | None = None) -> list[str]:
+    ctx = context if context and context.strip() else None
+    key = cache_key("namespaces", ctx or "")
+    cached = await cache_get(key)
+    if cached is not None:
+        return cached
     try:
-        # Convert empty string to None
-        ctx = context if context and context.strip() else None
-        return list_namespaces(context=ctx)
+        data = list_namespaces(context=ctx)
+        await cache_set(key, data, settings.cache_ttl_namespaces)
+        return data
     except Exception as e:
         logger.warning("list_namespaces failed: %s", e)
         raise HTTPException(status_code=502, detail=str(e))
@@ -68,9 +80,15 @@ async def get_resources(
     ctx = context if context and context.strip() else None
     if kind != "Node" and not ns:
         raise HTTPException(status_code=400, detail="namespace required for Pod, Deployment, StatefulSet")
+    key = cache_key("resources", ctx or "", ns or "", kind)
+    cached = await cache_get(key)
+    if cached is not None:
+        return [ResourceItem(**r) for r in cached]
     try:
         items = list_resources(kind=kind, namespace=ns, context=ctx)
-        return [ResourceItem(name=r["name"], namespace=r.get("namespace"), kind=r["kind"]) for r in items]
+        result = [ResourceItem(name=r["name"], namespace=r.get("namespace"), kind=r["kind"]) for r in items]
+        await cache_set(key, [r.model_dump() for r in result], settings.cache_ttl_resources)
+        return result
     except Exception as e:
         logger.warning("list_resources failed: %s", e)
         raise HTTPException(status_code=502, detail=str(e))
@@ -80,6 +98,17 @@ async def get_resources(
 async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
     if req.kind != TargetKind.Node and not req.namespace:
         raise HTTPException(status_code=400, detail="namespace required for Pod, Deployment, StatefulSet")
+    analyze_key = cache_key(
+        "analyze",
+        req.context or "",
+        req.namespace or "",
+        req.kind.value,
+        req.name,
+        str(req.include_previous_logs),
+    )
+    cached = await cache_get(analyze_key)
+    if cached is not None:
+        return AnalyzeResponse(**cached)
     try:
         analysis_dict, evidence, trunc_report, tokens_used, response_time_ms, err = await run_analysis(
             kind=req.kind.value,
@@ -133,7 +162,7 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
         evidence=evidence,
         error=None,
     )
-    return AnalyzeResponse(
+    response = AnalyzeResponse(
         analysis_json=analysis_json,
         analysis_markdown=markdown,
         evidence=evidence,
@@ -142,6 +171,8 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
         response_time_ms=response_time_ms,
         error=None,
     )
+    await cache_set(analyze_key, response.model_dump(), settings.cache_ttl_analyze)
+    return response
 
 
 @router.get("/history")
