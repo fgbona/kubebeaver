@@ -24,6 +24,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - **In-cluster deployment**: Can run inside Kubernetes with RBAC for least-privilege access
 - **Cluster health scan**: On-demand namespace or cluster-wide scan for failure signals (failing pods, replica mismatches, node pressure) with prioritized findings, **colored severity** (Critical/High/Medium/Low/Info), **per-finding timestamps** (when the issue occurred), and suggested kubectl commands
 - **Evidence formatting**: When "Include logs in evidence" is enabled, scan evidence (e.g. `pod_logs`) is **pretty-printed and syntax-highlighted** (jq-style) in the UI for easier debugging
+- **Compare two analyses**: Select two analyses from History and run **Compare** to get a deterministic diff (pod phase, container restarts, lastState, events, analysis summary) and an LLM-generated engineer-friendly explanation; side-by-side metadata and copy kubectl commands from both runs
 
 ## Roadmap
 
@@ -41,13 +42,14 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - ✅ **Issue timestamps** in scan findings (when each finding occurred, from pod/node evidence; falls back to scan time when not available)
 - ✅ **jq-style JSON highlighting** for Raw evidence (Analyze) and Evidence (Scan), with pretty-printing when evidence includes logs
 - ✅ **MySQL/Postgres + Alembic**: Optional external DB with migrations; SQLite remains the default
+- ✅ **Compare two analyses**: Select two from History → Compare; deterministic diff (pod/container/events) + LLM explanation; side-by-side metadata and copy kubectl commands
 
 ### Next (v2.0 - Q2 2026)
 
 See [Milestone v2.0.0-alpha], [Milestone v2.0.0-beta], [Milestone v2.0.0-rc] for planned features:
 
 - [ ] **Heuristics Engine**: Additional deterministic checks (current scan covers CrashLoopBackOff, ImagePullBackOff, replica mismatch, node pressure)
-- [ ] **Comparison**: Compare two analyses side-by-side (what changed and why)
+- [x] **Comparison**: Compare two analyses side-by-side (what changed and why) — implemented in Sprint 3
 - [ ] **Incidents**: Group analyses into incidents with timeline and export
 - [ ] **Scheduled Scans**: Automated health checks (daily/weekly)
 - [ ] **Webhooks**: Slack notifications and generic webhook integrations
@@ -188,6 +190,7 @@ kubectl create secret generic kubebeaver-secrets -n kubebeaver \
 | `CACHE_TTL_ANALYZE` | Cache TTL for analysis results (seconds) | 300 |
 | `SCAN_MAX_FINDINGS` | Max findings per scan (payload bound) | 200 |
 | `SCAN_PENDING_MINUTES` | Pod Pending longer than this (minutes) is reported | 5 |
+| `MAX_COMPARE_CHARS` | Max characters sent to LLM for compare (diff + context) | 8000 |
 | `ALEMBIC_DATABASE_URL` | Database URL for Alembic when running migrations on the host (e.g. `mysql+pymysql://...@localhost:33064/...`); used instead of `DATABASE_URL` so host can reach DB | - |
 
 **Database:**  
@@ -219,6 +222,7 @@ With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in 
   - `response_time_ms`: Response time in milliseconds (displayed as seconds if ≥1000ms)
 - **GET /api/history** – List recent analyses (saved automatically to SQLite)
 - **GET /api/history/{id}** – Get one analysis by id with full details
+- **POST /api/compare** – Body: `{ "analysis_id_a": "<uuid>", "analysis_id_b": "<uuid>" }`. Returns: `diff_summary` (markdown), `changes` (array of `{ type, path, before, after, impact }`), `likely_reasoning` (LLM explanation citing diff paths), `analysis_a` / `analysis_b` (metadata + `kubectl_commands`). Uses stored evidence and analysis_json; LLM payload is limited to diff + minimal context.
 - **POST /api/scan** – Run cluster health scan. Body: `{ "context?", "scope": "namespace"|"cluster", "namespace?" (required when scope=namespace), "include_logs?" }`. Returns: `id`, `created_at`, `summary_markdown`, `error?`, `findings[]`, `counts` (by severity), `duration_ms?`.
 - **GET /api/scans** – List recent scans (`?limit=50`).
 - **GET /api/scans/{id}** – Get scan by id with full findings and summary. Each finding includes `occurred_at?` (ISO timestamp when the issue happened, from pod/node evidence) when available.
@@ -282,6 +286,16 @@ The UI displays metrics in the result header: **"Result - 1,234 tokens - 2.3s"**
 4. **List scans:** `curl -s http://localhost:8000/api/scans | jq` (or use the “Recent scans” list in the UI). Expect an array of scan objects with `id`, `created_at`, `scope`, `namespace`, `findings_count`, `error?`.
 5. **Get scan detail:** `curl -s http://localhost:8000/api/scans/<id> | jq` (replace `<id>` with a scan id from step 4). Expect `created_at`, `summary_markdown`, `findings[]` (each with `severity`, `category`, `title`, `description`, `affected_refs`, `suggested_commands`, `evidence_snippet?`, `occurred_at?`).
 6. **Click a finding** in the UI: detail panel shows formatted, syntax-highlighted evidence (if collected) and suggested kubectl commands. When "Include logs in evidence" was used, `pod_logs` and other JSON evidence are pretty-printed and colored.
+
+---
+
+## How to verify (Compare)
+
+1. **Have at least two analyses** in History (run Analyze on the same or different resources at different times).
+2. **Open the Analyze tab** and scroll to **History**.
+3. **Select two analyses** using the checkboxes (first selection = A, second = B).
+4. **Click "Compare selected"**. The compare panel shows side-by-side metadata (Analysis A vs B), **Likely reasoning** (LLM), **Diff summary** (markdown), and **Copy kubectl commands** (from A and from B).
+5. **API:** `curl -s -X POST http://localhost:8000/api/compare -H "Content-Type: application/json" -d '{"analysis_id_a":"<id1>","analysis_id_b":"<id2>"}' | jq`. Expect `diff_summary`, `changes[]`, `likely_reasoning`, `analysis_a`, `analysis_b`.
 
 ---
 

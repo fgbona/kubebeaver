@@ -17,11 +17,15 @@ from app.models import (
     ScanFindingItem,
     TargetKind,
     TruncationReport,
+    CompareRequest,
+    CompareResponse,
+    CompareChangeItem,
 )
 from app.k8s_client import list_contexts, list_namespaces, list_resources, check_connection
 from app.analyzer import run_analysis
 from app.history import save_analysis, list_analyses, get_analysis, init_db
 from app.scan_service import execute_and_save_scan, list_scans as list_scans_svc, get_scan as get_scan_svc
+from app.compare_service import run_compare
 from app.llm import get_llm_provider
 from app.cache import cache_key, get as cache_get, set as cache_set
 
@@ -193,6 +197,22 @@ async def history_get(analysis_id: str) -> dict[str, Any]:
     if not row:
         raise HTTPException(status_code=404, detail="Analysis not found")
     return row
+
+
+@router.post("/compare", response_model=CompareResponse)
+async def compare_post(req: CompareRequest) -> CompareResponse:
+    result = await run_compare(req.analysis_id_a, req.analysis_id_b)
+    if result.get("error"):
+        status = 404 if "not found" in (result["error"] or "").lower() else 400
+        raise HTTPException(status_code=status, detail=result["error"])
+    return CompareResponse(
+        diff_summary=result["diff_summary"],
+        changes=[CompareChangeItem(**c) for c in result["changes"]],
+        likely_reasoning=result["likely_reasoning"],
+        analysis_a=result["analysis_a"],
+        analysis_b=result["analysis_b"],
+        error=None,
+    )
 
 
 # --- Scan ---

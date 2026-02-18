@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Limits
     request_timeout: int = 120
     max_evidence_chars: int = 60_000
+    max_compare_chars: int = 8_000  # Max chars sent to LLM for compare (diff + minimal context)
     max_log_lines: int = 300
     max_events: int = 50
     max_pods_per_workload: int = 3

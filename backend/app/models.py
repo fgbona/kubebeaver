@@ -108,3 +108,28 @@ class ScanListItem(BaseModel):
     namespace: str | None
     findings_count: int
     error: str | None = None
+
+
+# --- Compare ---
+
+
+class CompareRequest(BaseModel):
+    analysis_id_a: str = Field(..., min_length=1)
+    analysis_id_b: str = Field(..., min_length=1)
+
+
+class CompareChangeItem(BaseModel):
+    type: str
+    path: str
+    before: Any = None
+    after: Any = None
+    impact: str
+
+
+class CompareResponse(BaseModel):
+    diff_summary: str = ""  # Markdown from LLM
+    changes: list[CompareChangeItem] = Field(default_factory=list)
+    likely_reasoning: str = ""  # LLM explanation citing diff items
+    analysis_a: dict[str, Any] = Field(default_factory=dict)  # metadata for UI
+    analysis_b: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
