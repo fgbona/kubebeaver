@@ -15,8 +15,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -e . && \
     pip cache purge
 
-# Copy application code
+# Copy application code and Alembic
 COPY app/ app/
+COPY alembic.ini ./
+COPY alembic/ alembic/
 
 # Create data directory for SQLite and set permissions
 RUN mkdir -p /app/data && \
