@@ -22,6 +22,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - **Performance metrics**: Tracks token usage and response time for each analysis
 - **Multi-context support**: Works with multiple Kubernetes contexts
 - **In-cluster deployment**: Can run inside Kubernetes with RBAC for least-privilege access
+- **Cluster health scan**: On-demand namespace or cluster-wide scan for failure signals (failing pods, replica mismatches, node pressure) with prioritized findings and suggested kubectl commands
 
 ## Roadmap
 
@@ -34,13 +35,13 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - ✅ Analysis history (SQLite)
 - ✅ Multi-context support
 - ✅ In-cluster deployment with RBAC
+- ✅ **Cluster health scan (on-demand)**: Scan a namespace or the whole cluster for failure signals; view findings by severity/category with evidence and suggested commands
 
 ### Next (v2.0 - Q2 2026)
 
 See [Milestone v2.0.0-alpha], [Milestone v2.0.0-beta], [Milestone v2.0.0-rc] for planned features:
 
-- [ ] **Cluster Health Scan**: On-demand namespace/cluster scans with prioritized findings
-- [ ] **Heuristics Engine**: Deterministic checks for common failures (CrashLoopBackOff, ImagePullBackOff, etc.)
+- [ ] **Heuristics Engine**: Additional deterministic checks (current scan covers CrashLoopBackOff, ImagePullBackOff, replica mismatch, node pressure)
 - [ ] **Comparison**: Compare two analyses side-by-side (what changed and why)
 - [ ] **Incidents**: Group analyses into incidents with timeline and export
 - [ ] **Scheduled Scans**: Automated health checks (daily/weekly)
@@ -98,6 +99,8 @@ All settings come from `.env` in the repo root (see `.env.example`). Use `LLM_PR
 Analysis history is stored in the `kubebeaver-history` volume and persists across restarts.
 
 In the UI (http://localhost:8080): choose context, namespace, target type (Pod / Deployment / StatefulSet / Node), resource name, then **Analyze**. View the markdown result and expand **Raw evidence** if needed.
+
+Use the **Scan** tab to run a cluster health scan: pick scope (namespace or cluster), select a namespace when scoping to one, optionally enable **Include logs in evidence**, then **Scan**. Results show a summary (counts by severity), a filterable list of findings, and a detail panel (evidence + suggested kubectl commands) when you click a finding.
 
 ---
 
@@ -164,6 +167,8 @@ kubectl create secret generic kubebeaver-secrets -n kubebeaver \
 | `CACHE_TTL_NAMESPACES` | Cache TTL for namespace list (seconds) | 60 |
 | `CACHE_TTL_RESOURCES` | Cache TTL for resource list (seconds) | 30 |
 | `CACHE_TTL_ANALYZE` | Cache TTL for analysis results (seconds) | 300 |
+| `SCAN_MAX_FINDINGS` | Max findings per scan (payload bound) | 200 |
+| `SCAN_PENDING_MINUTES` | Pod Pending longer than this (minutes) is reported | 5 |
 
 **Database:**  
 By default, KubeBeaver uses SQLite (stored in `kubebeaver-history` volume). To use MySQL or Postgres, set `DATABASE_URL` in `.env`:
@@ -189,6 +194,9 @@ With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in 
   - `response_time_ms`: Response time in milliseconds (displayed as seconds if ≥1000ms)
 - **GET /api/history** – List recent analyses (saved automatically to SQLite)
 - **GET /api/history/{id}** – Get one analysis by id with full details
+- **POST /api/scan** – Run cluster health scan. Body: `{ "context?", "scope": "namespace"|"cluster", "namespace?" (required when scope=namespace), "include_logs?" }`. Returns: `id`, `summary_markdown`, `error?`, `findings[]`, `counts` (by severity).
+- **GET /api/scans** – List recent scans (`?limit=50`).
+- **GET /api/scans/{id}** – Get scan by id with full findings and summary.
 
 ---
 
@@ -238,6 +246,17 @@ With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in 
 ```
 
 The UI displays metrics in the result header: **"Result - 1,234 tokens - 2.3s"** (time shown in seconds if ≥1000ms, otherwise in milliseconds).
+
+---
+
+## How to verify (Scan)
+
+1. **Start the stack:** `docker compose up --build` (or run backend + frontend locally).
+2. **Open Scan tab:** http://localhost:8080 → click **Scan**.
+3. **Run a scan:** Choose scope **Namespace**, select a namespace, click **Scan**. Expect a summary (e.g. counts by severity) and a list of findings (or “Total findings: 0” if the namespace is healthy).
+4. **List scans:** `curl -s http://localhost:8000/api/scans | jq` (or use the “Recent scans” list in the UI). Expect an array of scan objects with `id`, `created_at`, `scope`, `namespace`, `findings_count`, `error?`.
+5. **Get scan detail:** `curl -s http://localhost:8000/api/scans/<id> | jq` (replace `<id>` with a scan id from step 4). Expect `summary_markdown`, `findings[]` (each with `severity`, `category`, `title`, `description`, `affected_refs`, `suggested_commands`, `evidence_snippet?`).
+6. **Click a finding** in the UI: detail panel shows evidence (if collected) and suggested kubectl commands.
 
 ---
 
