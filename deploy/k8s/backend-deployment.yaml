@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubebeaver-backend
+  namespace: kubebeaver
+  labels:
+    app: kubebeaver-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubebeaver-backend
+  template:
+    metadata:
+      labels:
+        app: kubebeaver-backend
+    spec:
+      serviceAccountName: kubebeaver
+      containers:
+        - name: backend
+          image: kubebeaver-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: IN_CLUSTER
+              value: "true"
+            - name: LLM_PROVIDER
+              valueFrom:
+                configMapKeyRef:
+                  name: kubebeaver-config
+                  key: LLM_PROVIDER
+                  optional: true
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: kubebeaver-config
+                  key: OPENAI_BASE_URL
+                  optional: true
+            - name: OPENAI_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: kubebeaver-config
+                  key: OPENAI_MODEL
+                  optional: true
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kubebeaver-secrets
+                  key: GROQ_API_KEY
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kubebeaver-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: kubebeaver
+spec:
+  selector:
+    app: kubebeaver-backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http
