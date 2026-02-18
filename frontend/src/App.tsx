@@ -7,6 +7,7 @@ import {
   type ScanResponse,
   type ScanListItem,
   type ScanFindingItem,
+  type CompareResponse,
 } from "./api";
 
 type Kind = "Pod" | "Deployment" | "StatefulSet" | "Node";
@@ -143,6 +144,12 @@ function App() {
     | (HistoryItem & { analysis_markdown?: string; analysis_json?: unknown })
     | null
   >(null);
+  const [compareSelectedIds, setCompareSelectedIds] = useState<string[]>([]);
+  const [compareResult, setCompareResult] = useState<CompareResponse | null>(
+    null,
+  );
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
 
   // Scan state
   const [scanScope, setScanScope] = useState<"namespace" | "cluster">(
@@ -273,6 +280,39 @@ function App() {
     } catch {
       setHistoryDetail(null);
     }
+  };
+
+  const toggleCompareSelection = (id: string) => {
+    setCompareSelectedIds((prev) =>
+      prev.includes(id)
+        ? prev.filter((x) => x !== id)
+        : prev.length >= 2
+          ? [...prev.slice(1), id]
+          : [...prev, id],
+    );
+  };
+
+  const runCompare = async () => {
+    if (compareSelectedIds.length !== 2) return;
+    setCompareLoading(true);
+    setCompareError(null);
+    setCompareResult(null);
+    try {
+      const res = await api.compare({
+        analysis_id_a: compareSelectedIds[0],
+        analysis_id_b: compareSelectedIds[1],
+      });
+      setCompareResult(res);
+    } catch (e) {
+      setCompareError(String(e));
+    } finally {
+      setCompareLoading(false);
+    }
+  };
+
+  const copyKubectlCommands = (commands: string[]) => {
+    const text = commands.join("\n");
+    navigator.clipboard.writeText(text);
   };
 
   const loadScanList = useCallback(async () => {
@@ -848,7 +888,137 @@ function App() {
             </div>
           )}
 
-          {viewHistoryId && (
+          {compareResult && (
+            <div className="card">
+              <h2>Compare analyses</h2>
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => {
+                  setCompareResult(null);
+                  setCompareError(null);
+                }}
+              >
+                ← Back
+              </button>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 16,
+                  marginTop: 12,
+                }}
+              >
+                <div>
+                  <h3 style={{ marginTop: 0 }}>Analysis A</h3>
+                  <p style={{ margin: 0, fontSize: 14 }}>
+                    {compareResult.analysis_a.kind}{" "}
+                    {compareResult.analysis_a.name}{" "}
+                    {compareResult.analysis_a.namespace &&
+                      `(${compareResult.analysis_a.namespace})`}
+                  </p>
+                  <p style={{ margin: "4px 0 0", color: "#666", fontSize: 12 }}>
+                    {new Date(
+                      compareResult.analysis_a.created_at,
+                    ).toLocaleString()}
+                  </p>
+                </div>
+                <div>
+                  <h3 style={{ marginTop: 0 }}>Analysis B</h3>
+                  <p style={{ margin: 0, fontSize: 14 }}>
+                    {compareResult.analysis_b.kind}{" "}
+                    {compareResult.analysis_b.name}{" "}
+                    {compareResult.analysis_b.namespace &&
+                      `(${compareResult.analysis_b.namespace})`}
+                  </p>
+                  <p style={{ margin: "4px 0 0", color: "#666", fontSize: 12 }}>
+                    {new Date(
+                      compareResult.analysis_b.created_at,
+                    ).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+              {compareResult.likely_reasoning && (
+                <div style={{ marginTop: 16 }}>
+                  <h3 style={{ marginTop: 0 }}>Likely reasoning</h3>
+                  <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+                    {compareResult.likely_reasoning}
+                  </p>
+                </div>
+              )}
+              {compareResult.diff_summary && (
+                <div style={{ marginTop: 16 }}>
+                  <h3 style={{ marginTop: 0 }}>Diff summary</h3>
+                  <div className="markdown-body">
+                    <ReactMarkdown>{compareResult.diff_summary}</ReactMarkdown>
+                  </div>
+                </div>
+              )}
+              <div style={{ marginTop: 16 }}>
+                <h3 style={{ marginTop: 0 }}>Copy kubectl commands</h3>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 12,
+                  }}
+                >
+                  <div>
+                    <p style={{ margin: "0 0 8px", fontSize: 13 }}>
+                      From A ({compareResult.analysis_a.created_at.slice(0, 10)}
+                      )
+                    </p>
+                    {(compareResult.analysis_a.kubectl_commands ?? []).length >
+                    0 ? (
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={() =>
+                          copyKubectlCommands(
+                            compareResult.analysis_a.kubectl_commands ?? [],
+                          )
+                        }
+                      >
+                        Copy {compareResult.analysis_a.kubectl_commands?.length}{" "}
+                        commands
+                      </button>
+                    ) : (
+                      <span style={{ color: "#666", fontSize: 13 }}>
+                        No commands
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <p style={{ margin: "0 0 8px", fontSize: 13 }}>
+                      From B ({compareResult.analysis_b.created_at.slice(0, 10)}
+                      )
+                    </p>
+                    {(compareResult.analysis_b.kubectl_commands ?? []).length >
+                    0 ? (
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={() =>
+                          copyKubectlCommands(
+                            compareResult.analysis_b.kubectl_commands ?? [],
+                          )
+                        }
+                      >
+                        Copy {compareResult.analysis_b.kubectl_commands?.length}{" "}
+                        commands
+                      </button>
+                    ) : (
+                      <span style={{ color: "#666", fontSize: 13 }}>
+                        No commands
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {viewHistoryId && !compareResult && (
             <div className="card">
               <h2>History – {viewHistoryId.slice(0, 8)}</h2>
               <button
@@ -884,25 +1054,59 @@ function App() {
 
           <div className="card">
             <h2>History</h2>
+            {compareError && (
+              <div
+                className="error-box"
+                role="alert"
+                style={{ marginBottom: 12 }}
+              >
+                {compareError}
+              </div>
+            )}
+            <p style={{ fontSize: 13, color: "#666", marginBottom: 8 }}>
+              Select two analyses and click Compare.
+            </p>
             <ul style={{ listStyle: "none", padding: 0 }}>
               {history.slice(0, 15).map((h) => (
-                <li key={h.id} style={{ marginBottom: 8 }}>
+                <li
+                  key={h.id}
+                  style={{
+                    marginBottom: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={compareSelectedIds.includes(h.id)}
+                    onChange={() => toggleCompareSelection(h.id)}
+                    aria-label={`Select ${h.kind} ${h.name} for compare`}
+                  />
                   <button
                     type="button"
                     className="link-button"
                     onClick={() => openHistoryDetail(h.id)}
+                    style={{ flex: 1, textAlign: "left" }}
                   >
                     {h.kind} {h.name} {h.namespace && `(${h.namespace})`} –{" "}
                     {new Date(h.created_at).toLocaleString()}
                   </button>
-                  {h.error && (
-                    <span style={{ color: "#c62828", marginLeft: 8 }}>
-                      Error
-                    </span>
-                  )}
+                  {h.error && <span style={{ color: "#c62828" }}>Error</span>}
                 </li>
               ))}
             </ul>
+            {compareSelectedIds.length === 2 && (
+              <button
+                type="button"
+                className="primary"
+                disabled={compareLoading}
+                onClick={runCompare}
+                style={{ marginTop: 8 }}
+              >
+                {compareLoading ? "Comparing…" : "Compare selected"}
+              </button>
+            )}
             {history.length === 0 && (
               <p style={{ color: "#666" }}>No analyses yet.</p>
             )}

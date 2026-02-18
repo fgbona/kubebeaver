@@ -93,6 +93,37 @@ export type ScanDetail = ScanListItem & {
   findings: ScanFindingItem[];
 };
 
+// Compare
+export type CompareChangeItem = {
+  type: string;
+  path: string;
+  before: unknown;
+  after: unknown;
+  impact: string;
+};
+export type CompareResponse = {
+  diff_summary: string;
+  changes: CompareChangeItem[];
+  likely_reasoning: string;
+  analysis_a: {
+    id: string;
+    created_at: string;
+    kind: string;
+    name: string;
+    namespace: string | null;
+    kubectl_commands?: string[];
+  };
+  analysis_b: {
+    id: string;
+    created_at: string;
+    kind: string;
+    name: string;
+    namespace: string | null;
+    kubectl_commands?: string[];
+  };
+  error: string | null;
+};
+
 async function get<T>(
   path: string,
   params?: Record<string, string>,
@@ -154,6 +185,8 @@ export const api = {
         evidence_summary?: string;
       }
     >(`/history/${id}`),
+  compare: (body: { analysis_id_a: string; analysis_id_b: string }) =>
+    post<CompareResponse>("/compare", body),
   scan: (body: ScanRequest) => post<ScanResponse>("/scan", body),
   scans: (limit?: number) =>
     get<ScanListItem[]>(
