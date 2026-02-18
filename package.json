@@ -1,6 +1,6 @@
 {
   "name": "kubebeaver",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Kubernetes troubleshooting assistant - collects cluster signals and uses an LLM for diagnostics",
   "repository": {
