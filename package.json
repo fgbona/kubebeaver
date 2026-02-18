@@ -6,5 +6,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/fgbona/kubebeaver"
+  },
+  "scripts": {
+    "release": "npm version ${VERSION:-patch} --no-git-tag-version --allow-same-version"
   }
 }
