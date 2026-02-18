@@ -23,6 +23,42 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - **Multi-context support**: Works with multiple Kubernetes contexts
 - **In-cluster deployment**: Can run inside Kubernetes with RBAC for least-privilege access
 
+## Roadmap
+
+### Now (v1.0 - Current)
+
+- ✅ Single resource analysis (Pod, Deployment, StatefulSet, Node)
+- ✅ Evidence collection (events, logs, describe, status)
+- ✅ LLM-powered diagnostics (Groq, OpenAI-compatible)
+- ✅ Evidence sanitization and truncation
+- ✅ Analysis history (SQLite)
+- ✅ Multi-context support
+- ✅ In-cluster deployment with RBAC
+
+### Next (v2.0 - Q2 2026)
+
+See [Milestone v2.0.0-alpha], [Milestone v2.0.0-beta], [Milestone v2.0.0-rc] for planned features:
+
+- [ ] **Cluster Health Scan**: On-demand namespace/cluster scans with prioritized findings
+- [ ] **Heuristics Engine**: Deterministic checks for common failures (CrashLoopBackOff, ImagePullBackOff, etc.)
+- [ ] **Comparison**: Compare two analyses side-by-side (what changed and why)
+- [ ] **Incidents**: Group analyses into incidents with timeline and export
+- [ ] **Scheduled Scans**: Automated health checks (daily/weekly)
+- [ ] **Webhooks**: Slack notifications and generic webhook integrations
+- [ ] **Export**: JSON, Markdown, and PDF export for incidents and analyses
+- [ ] **MySQL Support**: Production-grade database with Alembic migrations (SQLite fallback still available)
+
+### Later (v2.1+)
+
+- [ ] **Multi-Cluster**: Scan and aggregate findings across multiple clusters
+- [ ] **Custom Heuristics**: User-defined rules (YAML/JSON)
+- [ ] **Advanced Metrics**: Cost tracking, performance analytics, Grafana dashboards
+- [ ] **RBAC**: Fine-grained permissions (who can scan what)
+- [ ] **API Keys**: Per-user API keys for programmatic access
+- [ ] **Trend Analysis**: Resource health over time (requires time-series DB)
+
+**Contributing:** See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get involved. We welcome contributions to any roadmap item.
+
 ## Repository layout
 
 - **`/backend`** – FastAPI API (Python): K8s client, collectors, sanitization, LLM integration, analysis history
