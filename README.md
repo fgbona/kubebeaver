@@ -65,6 +65,20 @@ See [Milestone v2.0.0-alpha], [Milestone v2.0.0-beta], [Milestone v2.0.0-rc] for
 
 **Contributing:** See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get involved. We welcome contributions to any roadmap item.
 
+## Releases and changelog
+
+Releases use [standard-version](https://github.com/conventional-changelog/standard-version) and [Conventional Commits](https://www.conventionalcommits.org/) so the changelog and GitHub release notes are generated from commits (and PR titles). Use these prefixes so your changes appear in the right section:
+
+| Prefix   | Section in changelog | Example |
+|----------|----------------------|--------|
+| `feat:`  | Features             | `feat: add cluster health scan` |
+| `fix:`   | Bug Fixes            | `fix: lint on JSON in frontend` |
+| `docs:`  | Documentation       | `docs: update README` |
+| `refactor:` | Code Refactoring  | `refactor: simplify scanner` |
+| `perf:`  | Performance         | `perf: cache namespace list` |
+
+Works for both Node (frontend) and Python (backend). When you run the release script (e.g. `release` or `release patch`), it runs `standard-version`, which bumps the version and updates `CHANGELOG.md` from these commits; the script then pushes the tag and creates the GitHub release using the new version’s notes from the changelog. Run `npm install` in the repo root so the devDependency `standard-version` is available.
+
 ## Repository layout
 
 - **`/backend`** – FastAPI API (Python): K8s client, collectors, sanitization, LLM integration, analysis history
