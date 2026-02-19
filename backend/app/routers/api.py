@@ -23,6 +23,9 @@ from app.models import (
     CompareResponse,
     CompareChangeItem,
     CreateIncidentRequest,
+    UpdateIncidentRequest,
+    CreateIncidentFromScanRequest,
+    CreateIncidentFromAnalysisRequest,
     AddIncidentItemRequest,
     ExportIncidentRequest,
     IncidentListItem,
@@ -38,6 +41,9 @@ from app.scan_service import execute_and_save_scan, list_scans as list_scans_svc
 from app.compare_service import run_compare
 from app.incident_service import (
     create_incident,
+    update_incident,
+    create_incident_from_scan,
+    create_incident_from_analysis,
     add_incident_item,
     add_incident_note,
     list_incidents,
@@ -355,6 +361,65 @@ async def incidents_create(req: CreateIncidentRequest) -> dict[str, str]:
         tags=req.tags or None,
     )
     return {"id": incident_id}
+
+
+@router.patch("/incidents/{incident_id}")
+async def incidents_update(incident_id: str, req: UpdateIncidentRequest) -> IncidentDetail:
+    """Update incident fields."""
+    # Validate enums
+    if req.status is not None and req.status not in ("open", "mitigating", "resolved"):
+        raise HTTPException(status_code=400, detail=f"Invalid status: {req.status}. Must be one of: open, mitigating, resolved")
+    if req.severity is not None and req.severity not in ("info", "low", "medium", "high", "critical"):
+        raise HTTPException(status_code=400, detail=f"Invalid severity: {req.severity}. Must be one of: info, low, medium, high, critical")
+    
+    updated = await update_incident(
+        incident_id=incident_id,
+        title=req.title,
+        description=req.description,
+        status=req.status,
+        severity=req.severity,
+        tags=req.tags,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    row = await get_incident_with_timeline(incident_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return IncidentDetail(**row)
+
+
+@router.post("/incidents/from-scan", status_code=201)
+async def incidents_from_scan(req: CreateIncidentFromScanRequest) -> IncidentDetail:
+    """Create incident from scan with scan as first item."""
+    # Validate severity if provided
+    if req.severity is not None and req.severity not in ("info", "low", "medium", "high", "critical"):
+        raise HTTPException(status_code=400, detail=f"Invalid severity: {req.severity}. Must be one of: info, low, medium, high, critical")
+    
+    incident = await create_incident_from_scan(
+        scan_id=req.scan_id,
+        title=req.title,
+        severity=req.severity,
+    )
+    if not incident:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return IncidentDetail(**incident)
+
+
+@router.post("/incidents/from-analysis", status_code=201)
+async def incidents_from_analysis(req: CreateIncidentFromAnalysisRequest) -> IncidentDetail:
+    """Create incident from analysis with analysis as first item."""
+    # Validate severity if provided
+    if req.severity is not None and req.severity not in ("info", "low", "medium", "high", "critical"):
+        raise HTTPException(status_code=400, detail=f"Invalid severity: {req.severity}. Must be one of: info, low, medium, high, critical")
+    
+    incident = await create_incident_from_analysis(
+        analysis_id=req.analysis_id,
+        title=req.title,
+        severity=req.severity,
+    )
+    if not incident:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    return IncidentDetail(**incident)
 
 
 @router.post("/incidents/{incident_id}/add", status_code=201)

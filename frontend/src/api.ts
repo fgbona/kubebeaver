@@ -195,6 +195,19 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(API_BASE + path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || r.statusText);
+  }
+  return r.json() as Promise<T>;
+}
+
 async function del<T>(path: string): Promise<T> {
   const url = new URL(API_BASE + path, window.location.origin);
   const r = await fetch(url.toString(), { method: "DELETE" });
@@ -272,6 +285,12 @@ export const api = {
     post<{ id: string }>(`/incidents/${incidentId}/add`, body),
   incidentAddNote: (incidentId: string, content: string) =>
     post<{ id: string }>(`/incidents/${incidentId}/notes`, { content }),
+  incidentUpdate: (incidentId: string, body: UpdateIncidentRequest) =>
+    patch<IncidentDetail>(`/incidents/${incidentId}`, body),
+  incidentFromScan: (body: CreateIncidentFromScanRequest) =>
+    post<IncidentDetail>("/incidents/from-scan", body),
+  incidentFromAnalysis: (body: CreateIncidentFromAnalysisRequest) =>
+    post<IncidentDetail>("/incidents/from-analysis", body),
   incidentExport: async (
     incidentId: string,
     format: "markdown" | "json",
@@ -331,6 +350,23 @@ export type CreateIncidentRequest = {
   severity?: string;
   tags?: string[];
 };
+export type UpdateIncidentRequest = {
+  title?: string;
+  description?: string;
+  status?: "open" | "mitigating" | "resolved";
+  severity?: "info" | "low" | "medium" | "high" | "critical";
+  tags?: string[];
+};
+export type CreateIncidentFromScanRequest = {
+  scan_id: string;
+  title?: string;
+  severity?: string;
+};
+export type CreateIncidentFromAnalysisRequest = {
+  analysis_id: string;
+  title?: string;
+  severity?: string;
+};
 export type AddIncidentItemRequest = {
   type: "analysis" | "scan";
   ref_id: string;
@@ -343,8 +379,20 @@ export type IncidentListItem = {
   severity: string | null;
   tags: string[];
   status: string;
+  items_count: number;
+  notes_count: number;
 };
-export type IncidentDetail = IncidentListItem & {
+export type IncidentDetail = {
+  id: string;
+  created_at: string;
+  updated_at: string | null;
+  title: string;
+  description: string | null;
+  severity: string | null;
+  tags: string[];
+  status: string;
+  items_count: number;
+  notes_count: number;
   items: {
     id: string;
     item_type: string;
