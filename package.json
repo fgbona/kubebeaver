@@ -9,9 +9,10 @@
   },
   "scripts": {
     "build": "vite build",
-    "release": "standard-version",
     "release:notes": "node scripts/extract-release-notes.js",
-    "ship": "/usr/local/bin/release"
+    "pr": "/usr/local/bin/pr",
+    "ship": "/usr/local/bin/release",
+    "release": "standard-version"
   },
   "devDependencies": {
     "standard-version": "^9.5.0"

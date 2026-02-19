@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Analysis, ScanRun, ScanFinding, Incident, IncidentItem, IncidentNote
+from app.db.models import Analysis, ScanRun, ScanFinding, Incident, IncidentItem, IncidentNote, ScanSchedule
 
 logger = logging.getLogger(__name__)
 
@@ -361,3 +361,149 @@ class IncidentRepository:
         self.session.add(note)
         await self.session.commit()
         return note_id
+
+
+class ScheduleRepository:
+    """Repository for scan schedules."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(
+        self,
+        context: str | None,
+        scope: str,
+        namespace: str | None,
+        cron: str,
+        enabled: bool = True,
+    ) -> str:
+        """Create schedule. Returns schedule id."""
+        uid = str(uuid4())
+        created = datetime.utcnow().isoformat() + "Z"
+        row = ScanSchedule(
+            id=uid,
+            created_at=created,
+            context=context,
+            scope=scope,
+            namespace=namespace,
+            cron=cron,
+            enabled=enabled,
+        )
+        self.session.add(row)
+        await self.session.commit()
+        return uid
+
+    async def list_all(self, limit: int = 100) -> list[dict[str, Any]]:
+        """List all schedules (newest first)."""
+        try:
+            stmt = (
+                select(ScanSchedule)
+                .order_by(ScanSchedule.created_at.desc())
+                .limit(limit)
+            )
+            result = await self.session.execute(stmt)
+            rows = result.scalars().all()
+            return [
+                {
+                    "id": r.id,
+                    "created_at": r.created_at,
+                    "context": r.context,
+                    "scope": r.scope,
+                    "namespace": r.namespace,
+                    "cron": r.cron,
+                    "enabled": r.enabled,
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning("schedule list_all failed: %s", e)
+            return []
+
+    async def list_enabled(self) -> list[dict[str, Any]]:
+        """List enabled schedules (for scheduler)."""
+        try:
+            stmt = select(ScanSchedule).where(ScanSchedule.enabled.is_(True))
+            result = await self.session.execute(stmt)
+            rows = result.scalars().all()
+            return [
+                {
+                    "id": r.id,
+                    "context": r.context,
+                    "scope": r.scope,
+                    "namespace": r.namespace,
+                    "cron": r.cron,
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning("schedule list_enabled failed: %s", e)
+            return []
+
+    async def get(self, schedule_id: str) -> dict[str, Any] | None:
+        """Get schedule by id."""
+        try:
+            stmt = select(ScanSchedule).where(ScanSchedule.id == schedule_id)
+            result = await self.session.execute(stmt)
+            r = result.scalar_one_or_none()
+            if not r:
+                return None
+            return {
+                "id": r.id,
+                "created_at": r.created_at,
+                "context": r.context,
+                "scope": r.scope,
+                "namespace": r.namespace,
+                "cron": r.cron,
+                "enabled": r.enabled,
+            }
+        except Exception as e:
+            logger.warning("schedule get failed: %s", e)
+            return None
+
+    async def update(
+        self,
+        schedule_id: str,
+        *,
+        context: str | None = None,
+        scope: str | None = None,
+        namespace: str | None = None,
+        cron: str | None = None,
+        enabled: bool | None = None,
+    ) -> bool:
+        """Update schedule. Returns True if found and updated."""
+        try:
+            stmt = select(ScanSchedule).where(ScanSchedule.id == schedule_id)
+            result = await self.session.execute(stmt)
+            r = result.scalar_one_or_none()
+            if not r:
+                return False
+            if context is not None:
+                r.context = context if context else None
+            if scope is not None:
+                r.scope = scope
+            if namespace is not None:
+                r.namespace = namespace if namespace else None
+            if cron is not None:
+                r.cron = cron
+            if enabled is not None:
+                r.enabled = enabled
+            await self.session.commit()
+            return True
+        except Exception as e:
+            logger.warning("schedule update failed: %s", e)
+            return False
+
+    async def delete(self, schedule_id: str) -> bool:
+        """Delete schedule. Returns True if found and deleted."""
+        try:
+            stmt = select(ScanSchedule).where(ScanSchedule.id == schedule_id)
+            result = await self.session.execute(stmt)
+            r = result.scalar_one_or_none()
+            if not r:
+                return False
+            await self.session.delete(r)
+            await self.session.commit()
+            return True
+        except Exception as e:
+            logger.warning("schedule delete failed: %s", e)
+            return False

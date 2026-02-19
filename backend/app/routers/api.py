@@ -26,6 +26,9 @@ from app.models import (
     ExportIncidentRequest,
     IncidentListItem,
     IncidentDetail,
+    CreateScheduleRequest,
+    UpdateScheduleRequest,
+    ScheduleListItem,
 )
 from app.k8s_client import list_contexts, list_namespaces, list_resources, check_connection
 from app.analyzer import run_analysis
@@ -39,6 +42,13 @@ from app.incident_service import (
     list_incidents,
     get_incident_with_timeline,
     export_incident,
+)
+from app.schedule_service import (
+    create_schedule,
+    list_schedules as list_schedules_svc,
+    get_schedule as get_schedule_svc,
+    update_schedule as update_schedule_svc,
+    delete_schedule as delete_schedule_svc,
 )
 from app.llm import get_llm_provider
 from app.cache import cache_key, get as cache_get, set as cache_set
@@ -346,3 +356,76 @@ async def incidents_add_note(incident_id: str, body: dict[str, Any]) -> dict[str
     if note_id is None:
         raise HTTPException(status_code=404, detail="Incident not found")
     return {"id": note_id}
+
+
+# --- Schedules ---
+
+
+def _validate_cron(cron: str) -> None:
+    parts = cron.strip().split()
+    if len(parts) != 5:
+        raise HTTPException(status_code=400, detail="cron must have 5 parts (e.g. '0 * * * *' for hourly)")
+
+
+@router.post("/schedules", status_code=201)
+async def schedules_create(req: CreateScheduleRequest) -> dict[str, str]:
+    if req.scope not in ("namespace", "cluster"):
+        raise HTTPException(status_code=400, detail="scope must be 'namespace' or 'cluster'")
+    if req.scope == "namespace" and not (req.namespace and req.namespace.strip()):
+        raise HTTPException(status_code=400, detail="namespace required when scope is 'namespace'")
+    _validate_cron(req.cron)
+    context = req.context if req.context and req.context.strip() else None
+    namespace = req.namespace if req.namespace and req.namespace.strip() else None
+    sid = await create_schedule(
+        context=context,
+        scope=req.scope,
+        namespace=namespace,
+        cron=req.cron.strip(),
+        enabled=req.enabled,
+    )
+    return {"id": sid}
+
+
+@router.get("/schedules", response_model=list[ScheduleListItem])
+async def schedules_list(limit: int = 100) -> list[ScheduleListItem]:
+    items = await list_schedules_svc(limit=limit)
+    return [ScheduleListItem(**r) for r in items]
+
+
+@router.get("/schedules/{schedule_id}", response_model=ScheduleListItem)
+async def schedules_get(schedule_id: str) -> ScheduleListItem:
+    row = await get_schedule_svc(schedule_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return ScheduleListItem(**row)
+
+
+@router.put("/schedules/{schedule_id}", response_model=ScheduleListItem)
+async def schedules_update(schedule_id: str, req: UpdateScheduleRequest) -> ScheduleListItem:
+    if req.scope is not None and req.scope not in ("namespace", "cluster"):
+        raise HTTPException(status_code=400, detail="scope must be 'namespace' or 'cluster'")
+    cron_val: str | None = None
+    if req.cron is not None:
+        _validate_cron(req.cron)
+        cron_val = req.cron.strip()
+    context_val = (req.context or "").strip() if req.context is not None else None
+    namespace_val = (req.namespace or "").strip() if req.namespace is not None else None
+    ok = await update_schedule_svc(
+        schedule_id,
+        context=context_val,
+        scope=req.scope,
+        namespace=namespace_val,
+        cron=cron_val,
+        enabled=req.enabled,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    row = await get_schedule_svc(schedule_id)
+    return ScheduleListItem(**row)
+
+
+@router.delete("/schedules/{schedule_id}", status_code=204)
+async def schedules_delete(schedule_id: str) -> None:
+    ok = await delete_schedule_svc(schedule_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Schedule not found")

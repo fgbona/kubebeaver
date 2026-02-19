@@ -44,5 +44,10 @@ class Settings(BaseSettings):
     cache_ttl_resources: int = 30
     cache_ttl_analyze: int = 300  # 5 minutes
 
+    # Notifications (optional: leave empty to disable)
+    webhook_url: str = ""  # Generic HTTP POST on critical/high findings
+    slack_webhook_url: str = ""  # Slack incoming webhook
+    base_url: str = ""  # Base URL for scan detail links (e.g. https://kubebeaver.example.com)
+
 
 settings = Settings()
