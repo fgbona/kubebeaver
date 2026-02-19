@@ -19,6 +19,7 @@ dependencies = [
     "asyncpg>=0.29.0",  # PostgreSQL async driver
     "aiomysql>=0.2.0",  # MySQL async driver
     "pymysql>=1.1.0",  # MySQL sync driver (for Alembic)
+    "cryptography>=41.0.0",  # Required for MySQL caching_sha2_password auth
     "psycopg2-binary>=2.9.0",  # PostgreSQL sync driver (for Alembic)
     "apscheduler>=3.10.0",
 ]
