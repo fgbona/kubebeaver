@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   api,
@@ -131,6 +131,9 @@ function App() {
   const [selectedContext, setSelectedContext] = useState<string>("");
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [selectedNamespace, setSelectedNamespace] = useState<string>("");
+  const contextRef = useRef<string>("");
+  const namespaceKeyRef = useRef<number>(0);
+  const isLoadingNamespacesRef = useRef<boolean>(false);
   const [kind, setKind] = useState<Kind>("Pod");
   const [resourceNames, setResourceNames] = useState<
     { name: string; namespace: string | null; kind: string }[]
@@ -222,30 +225,178 @@ function App() {
     }
   }, []);
 
-  const loadContexts = useCallback(async () => {
-    try {
-      const list = await api.contexts();
-      setContexts(list);
-      const current = list.find((c) => c.current);
-      setSelectedContext(current ? current.name : (list[0]?.name ?? ""));
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
+  const loadContexts = useCallback(
+    async (preserveCurrent: boolean = false) => {
+      try {
+        const list = await api.contexts();
+        const currentSelectedContext = selectedContext; // Capture current value
+        console.log(
+          "[loadContexts] Called with preserveCurrent=",
+          preserveCurrent,
+          "current context=",
+          currentSelectedContext,
+        );
 
-  const loadNamespaces = useCallback(async () => {
-    if (!selectedContext && contexts.length > 0) return;
-    try {
-      const list = await api.namespaces(
-        selectedContext ? selectedContext : undefined,
+        setContexts(list);
+
+        // If preserveCurrent is true and we already have a selected context, keep it
+        if (preserveCurrent && currentSelectedContext) {
+          // Verify the selected context still exists in the list
+          const contextExists = list.some(
+            (c) => c.name === currentSelectedContext,
+          );
+          if (contextExists) {
+            // Context is still valid, keep it
+            console.log(
+              "[loadContexts] Preserving context:",
+              currentSelectedContext,
+            );
+            return;
+          }
+          // Context no longer exists, fall through to set a new one
+          console.log(
+            "[loadContexts] Context",
+            currentSelectedContext,
+            "no longer exists, will set new one",
+          );
+        }
+
+        // Set initial context (either first time or when preserveCurrent is false)
+        const current = list.find((c) => c.current);
+        const initialContext = current ? current.name : (list[0]?.name ?? "");
+        if (initialContext) {
+          // Only update if we don't have a selected context or if preserveCurrent is false
+          if (!currentSelectedContext || !preserveCurrent) {
+            if (initialContext !== currentSelectedContext) {
+              console.log(
+                "[loadContexts] Setting context from",
+                currentSelectedContext,
+                "to",
+                initialContext,
+              );
+              contextRef.current = initialContext;
+              setSelectedContext(initialContext);
+            }
+          } else {
+            console.log(
+              "[loadContexts] Skipping context change - preserveCurrent=true and context exists",
+            );
+          }
+        }
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [selectedContext],
+  );
+
+  const loadNamespaces = useCallback(
+    async (forContext?: string) => {
+      const contextToUse = forContext ?? selectedContext;
+      if (!contextToUse && contexts.length > 0) return;
+
+      console.log(
+        "[loadNamespaces] Loading namespaces for context:",
+        contextToUse,
       );
-      setNamespaces(list);
-      if (list.length && !list.includes(selectedNamespace))
-        setSelectedNamespace(list[0]);
-    } catch (e) {
+
+      try {
+        const list = await api.namespaces(
+          contextToUse ? contextToUse : undefined,
+        );
+        console.log(
+          "[loadNamespaces] Received namespaces:",
+          list.length,
+          "for context:",
+          contextToUse,
+        );
+        // Always update - we're loading for the current context
+        setNamespaces(list);
+        // Always reset to first namespace when loading
+        if (list.length > 0) {
+          setSelectedNamespace(list[0]);
+        } else {
+          setSelectedNamespace("");
+        }
+      } catch (e) {
+        console.error("[loadNamespaces] Error loading namespaces:", e);
+        setNamespaces([]);
+        setSelectedNamespace("");
+      }
+    },
+    [selectedContext, contexts.length],
+  );
+
+  // Handler to change context and clear related state
+  const handleContextChange = useCallback(
+    async (newContext: string) => {
+      console.log(
+        "[handleContextChange] Changing context from",
+        selectedContext,
+        "to",
+        newContext,
+      );
+      // Mark that we're loading namespaces to prevent useEffect from interfering
+      isLoadingNamespacesRef.current = true;
+      // Increment key to force React to recreate namespace selects
+      namespaceKeyRef.current += 1;
+      // Update ref immediately
+      contextRef.current = newContext;
+      // Clear namespaces and related state immediately
       setNamespaces([]);
-    }
-  }, [selectedContext, contexts.length, selectedNamespace]);
+      setSelectedNamespace("");
+      setScanNamespace("");
+      setScheduleCreateNamespace("");
+      // Update context
+      setSelectedContext(newContext);
+      // Load namespaces for new context immediately - call API directly with no_cache to bypass cache
+      try {
+        const list = await api.namespaces(newContext, true);
+        console.log(
+          "[handleContextChange] Loaded",
+          list.length,
+          "namespaces for context:",
+          newContext,
+          "full list:",
+          list,
+        );
+        // Verify context hasn't changed during async call
+        if (contextRef.current === newContext) {
+          console.log(
+            "[handleContextChange] Setting namespaces state with",
+            list.length,
+            "items",
+          );
+          setNamespaces(list);
+          if (list.length > 0) {
+            setSelectedNamespace(list[0]);
+            console.log(
+              "[handleContextChange] Set selectedNamespace to:",
+              list[0],
+            );
+          } else {
+            setSelectedNamespace("");
+          }
+        } else {
+          console.log(
+            "[handleContextChange] Context changed during async call, ignoring result",
+          );
+        }
+      } catch (e) {
+        console.error("[handleContextChange] Error loading namespaces:", e);
+        if (contextRef.current === newContext) {
+          setNamespaces([]);
+          setSelectedNamespace("");
+        }
+      } finally {
+        // Allow useEffect to run again after a short delay
+        setTimeout(() => {
+          isLoadingNamespacesRef.current = false;
+        }, 100);
+      }
+    },
+    [selectedContext],
+  );
 
   const loadResources = useCallback(async () => {
     const ns = kind === "Node" ? undefined : selectedNamespace;
@@ -271,11 +422,37 @@ function App() {
     loadHealth();
   }, [loadHealth]);
   useEffect(() => {
-    loadContexts();
-  }, [loadContexts]);
+    // Only set initial context on mount, preserve user selection afterwards
+    loadContexts(false);
+  }, []); // Empty deps - only run on mount
+  // Load namespaces when context changes (only for initial load, manual changes use handleContextChange)
   useEffect(() => {
-    loadNamespaces();
-  }, [loadNamespaces]);
+    // Skip if handleContextChange is currently loading namespaces
+    if (isLoadingNamespacesRef.current) {
+      console.log(
+        "[useEffect] Skipping - handleContextChange is loading namespaces",
+      );
+      return;
+    }
+
+    if (selectedContext && contexts.length > 0) {
+      // Check if this is the initial load (ref is empty) or if context changed externally
+      const isInitialLoad = !contextRef.current;
+      const contextChanged =
+        contextRef.current && contextRef.current !== selectedContext;
+
+      if (isInitialLoad || contextChanged) {
+        console.log(
+          "[useEffect] Loading namespaces for context:",
+          selectedContext,
+          "isInitial:",
+          isInitialLoad,
+        );
+        contextRef.current = selectedContext;
+        loadNamespaces();
+      }
+    }
+  }, [selectedContext, loadNamespaces, contexts.length]);
   useEffect(() => {
     loadResources();
   }, [loadResources]);
@@ -386,19 +563,58 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (tab === "scan") loadScanList();
+    console.log(
+      "[useEffect tab] Tab changed to:",
+      tab,
+      "selectedContext:",
+      selectedContext,
+    );
+
+    if (tab === "scan") {
+      loadScanList();
+      // Preserve current context when switching tabs - use current selectedContext value
+      if (selectedContext) {
+        loadContexts(true);
+        loadNamespaces();
+      } else {
+        // No context selected yet, load initial one
+        loadContexts(false);
+      }
+    }
     if (tab === "incidents") {
       loadIncidentList();
       loadHistory();
       loadScanList();
+      // Preserve current context when switching tabs
+      if (selectedContext) {
+        loadContexts(true);
+        loadNamespaces();
+      } else {
+        loadContexts(false);
+      }
     }
     if (tab === "schedules") {
       loadScheduleList();
-      loadContexts();
-      loadNamespaces();
+      // Preserve current context when switching tabs
+      if (selectedContext) {
+        loadContexts(true);
+        loadNamespaces();
+      } else {
+        loadContexts(false);
+      }
+    }
+    if (tab === "analyze") {
+      // Preserve current context when switching tabs
+      if (selectedContext) {
+        loadContexts(true);
+        loadNamespaces();
+      } else {
+        loadContexts(false);
+      }
     }
   }, [
     tab,
+    selectedContext,
     loadScanList,
     loadIncidentList,
     loadHistory,
@@ -878,7 +1094,7 @@ function App() {
                       onChange={(e) => {
                         const v = e.target.value;
                         setScheduleCreateContext(v);
-                        if (v) setSelectedContext(v);
+                        if (v) handleContextChange(v);
                       }}
                     >
                       <option value="">(default)</option>
@@ -1064,7 +1280,7 @@ function App() {
                     <label>Context</label>
                     <select
                       value={selectedContext}
-                      onChange={(e) => setSelectedContext(e.target.value)}
+                      onChange={(e) => handleContextChange(e.target.value)}
                     >
                       {contexts.map((c) => (
                         <option key={c.name} value={c.name}>
@@ -1092,6 +1308,7 @@ function App() {
                 <div className="form-row">
                   <label>Namespace</label>
                   <select
+                    key={`scan-namespace-${selectedContext}-${namespaceKeyRef.current}`}
                     value={scanNamespace}
                     onChange={(e) => setScanNamespace(e.target.value)}
                   >
@@ -1428,7 +1645,7 @@ function App() {
                     <label>Context</label>
                     <select
                       value={selectedContext}
-                      onChange={(e) => setSelectedContext(e.target.value)}
+                      onChange={(e) => handleContextChange(e.target.value)}
                     >
                       {contexts.map((c) => (
                         <option key={c.name} value={c.name}>
@@ -1443,6 +1660,7 @@ function App() {
               <div className="form-row">
                 <label>Namespace</label>
                 <select
+                  key={`namespace-${selectedContext}-${namespaceKeyRef.current}`}
                   value={selectedNamespace}
                   onChange={(e) => setSelectedNamespace(e.target.value)}
                   disabled={kind === "Node"}

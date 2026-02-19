@@ -156,7 +156,17 @@ async function get<T>(
     const t = await r.text();
     throw new Error(t || r.statusText);
   }
-  return r.json() as Promise<T>;
+  const json = await r.json();
+  // Debug logging for namespaces endpoint
+  if (path === "/namespaces") {
+    console.log("[api.get] Received response for /namespaces:", {
+      url: url.toString(),
+      responseType: Array.isArray(json) ? "array" : typeof json,
+      length: Array.isArray(json) ? json.length : "N/A",
+      data: json,
+    });
+  }
+  return json as T;
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -196,8 +206,11 @@ async function del(path: string): Promise<void> {
 export const api = {
   health: () => get<HealthResponse>("/health"),
   contexts: () => get<ContextInfo[]>("/contexts"),
-  namespaces: (context?: string) =>
-    get<string[]>("/namespaces", context ? { context } : undefined),
+  namespaces: (context?: string, noCache?: boolean) =>
+    get<string[]>("/namespaces", {
+      ...(context ? { context } : {}),
+      ...(noCache ? { no_cache: "true" } : {}),
+    }),
   resources: (params: { namespace?: string; kind: string; context?: string }) =>
     get<ResourceItem[]>("/resources", params as Record<string, string>),
   analyze: (body: {
