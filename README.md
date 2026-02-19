@@ -85,24 +85,46 @@ Releases use [standard-version](https://github.com/conventional-changelog/standa
 
 Works for both Node (frontend) and Python (backend). When you run the release script (e.g. `npm run release` or `npm run release -- patch`), it runs `standard-version`, which bumps the version and updates `CHANGELOG.md` from these commits. To use only the current version's notes as the release body, run `npm run release:notes` and pass the output to your release tool (e.g. `gh release create v$(node -p "require('./package.json').version") --notes-file <(npm run release:notes --silent)`). Run `npm install` in the repo root so the devDependency `standard-version` is available.
 
-**Script `ship`:** Like in [elaborall](https://github.com/fgbona/elaborall) (and similar apps), `npm run ship` is wired to an external script at `/usr/local/bin/release`. That script can run `standard-version`, then create the GitHub release with **curated release notes** (e.g. from a file you maintain, or by editing `CHANGELOG.md` before the release). This avoids relying only on the one-line commit summary in the changelog. Example flow: install a `release` script at `/usr/local/bin/release` that bumps version, pushes the tag, and runs `gh release create ... --notes-file /path/to/your/notes.md`.
+**Script `ship`:** Like in [elaborall](https://github.com/fgbona/elaborall) (and similar apps), `npm run ship` is wired to an external script at `/usr/local/bin/release`. That script can run `standard-version`, then create the GitHub release with curated notes.
 
-To get **richer release notes** (e.g. for v1.2.0), either paste the block below into the GitHub release description when creating/editing the release, or replace the corresponding version block in `CHANGELOG.md` with it so `npm run release:notes` outputs the same text:
+### Release notes ricas de uma vez por todas
 
-<details>
-<summary>Release notes body for v1.2.0 (Incident Mode)</summary>
+Para que o GitHub release saia com **texto completo** (bullets, API, frontend) em vez de uma linha só do commit:
+
+1. **Antes de criar o release**, crie o ficheiro **`scripts/release-notes-current.txt`** com o markdown que quiser no corpo do release (sem cabeçalho de versão; o GitHub já mostra a tag).
+2. Gere o release com:  
+   `gh release create v$(node -p "require('./package.json').version") --notes-file <(npm run release:notes --silent)`  
+   ou use `npm run ship` se o teu script invocar `release:notes`.
+3. O `extract-release-notes.js` **usa esse ficheiro em vez do CHANGELOG** quando existe e não está vazio. Depois do release podes apagar ou esvaziar o ficheiro para a próxima vez usar o CHANGELOG outra vez.
+
+Assim não precisas de editar o `CHANGELOG.md` (que pode estar protegido por hook) e manténs um único fluxo: **release-notes-current.txt** = corpo do release.
+
+**Exemplo para v1.3.0** (colar em `scripts/release-notes-current.txt` antes de criar o release v1.3.0):
+
+```markdown
+### Features
+
+* **Scheduled scans + notifications**
+  * Backend: table `scan_schedules` (context, scope, namespace, cron, enabled); Alembic migration
+  * Scheduler: APScheduler runs scans at cron and stores results (no Redis)
+  * Notifications: optional `WEBHOOK_URL` and `SLACK_WEBHOOK_URL`; on critical/high findings send counts, top 3 findings, and scan link when `BASE_URL` is set
+  * API: CRUD `POST/GET/PUT/DELETE /api/schedules`
+  * Frontend: **Schedules** tab — create/edit/delete schedules, cron and enabled toggle
+  * Repository tests for schedule CRUD
+```
+
+**Exemplo para v1.2.0** (referência):
 
 ```markdown
 ### Features
 
 * **Incident Mode** — group analyses and scans into incidents with a timeline and export
-  * Backend: entities `incidents`, `incident_items` (link analyses/scans), `incident_notes`; Alembic migration
-  * API: `POST /api/incidents`, `POST /api/incidents/{id}/add`, `GET /api/incidents`, `GET /api/incidents/{id}` (timeline), `POST /api/incidents/{id}/export` (markdown/json), `POST /api/incidents/{id}/notes`
-  * Frontend: new **Incidents** tab — create incident, add analysis/scan from history, add notes, view timeline, export Markdown or JSON (deterministic)
-  * Timeline: incident creation, items (analyses/scans) and notes ordered by `created_at`
+  * Backend: entities `incidents`, `incident_items`, `incident_notes`; Alembic migration
+  * API: `POST /api/incidents`, `POST /api/incidents/{id}/add`, `GET /api/incidents`, `GET /api/incidents/{id}` (timeline), `POST /api/incidents/{id}/export`, `POST /api/incidents/{id}/notes`
+  * Frontend: **Incidents** tab — create incident, add analysis/scan from history, add notes, view timeline, export Markdown or JSON
+  * Timeline: incident creation, items and notes ordered by `created_at`
   * Repository tests for incident CRUD and timeline
 ```
-</details>
 
 ## Repository layout
 

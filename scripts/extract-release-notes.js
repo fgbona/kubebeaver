@@ -1,18 +1,26 @@
 #!/usr/bin/env node
 /**
- * Extracts the release notes for the current version from CHANGELOG.md.
- * Outputs only the first version block (latest) for GitHub release body.
+ * Extracts the release notes for the current version.
+ * 1) If scripts/release-notes-current.txt exists and is non-empty, use it (curated body for GitHub).
+ * 2) Otherwise use the first version block from CHANGELOG.md (standard-version output).
  * Usage: node scripts/extract-release-notes.js   or   npm run release:notes
  */
 const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.resolve(__dirname, "..");
-const changelogPath = path.join(repoRoot, "CHANGELOG.md");
-const pkgPath = path.join(repoRoot, "package.json");
+const curatedPath = path.join(__dirname, "release-notes-current.txt");
 
-const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-const version = pkg.version;
+if (fs.existsSync(curatedPath)) {
+  const content = fs.readFileSync(curatedPath, "utf8").trim();
+  if (content) {
+    process.stdout.write(content);
+    process.stdout.write("\n");
+    process.exit(0);
+  }
+}
+
+const changelogPath = path.join(repoRoot, "CHANGELOG.md");
 const changelog = fs.readFileSync(changelogPath, "utf8");
 
 const blockStart = changelog.match(/^## \[[\d.]+\]/m);
