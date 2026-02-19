@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.6.1](https://github.com/fgbona/kubebeaver/compare/v1.6.0...v1.6.1) (2026-02-19)
+
+
+### Bug Fixes
+
+* Added cryptography to pyproject.toml ([8073c43](https://github.com/fgbona/kubebeaver/commit/8073c438426daff9f97f94b0ffcadbf7d2e82dbb))
+* Fixed context changes ([7a5607b](https://github.com/fgbona/kubebeaver/commit/7a5607b5f22475249a79d1631779a6115353ba48))
+
 ## [1.6.0](https://github.com/fgbona/kubebeaver/compare/v1.5.2...v1.6.0) (2026-02-19)
 
 
