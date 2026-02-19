@@ -87,46 +87,6 @@ Releases use [standard-version](https://github.com/conventional-changelog/standa
 
 Works for both Node (frontend) and Python (backend). When you run the release script (e.g. `npm run release` or `npm run release -- patch`), it runs `standard-version`, which bumps the version and updates `CHANGELOG.md` from these commits. To use only the current version's notes as the release body, run `npm run release:notes` and pass the output to your release tool. Use **`npm run version:current --silent`** (or `node scripts/version.js`) for the version—it reads from the repo root so it works even if your release script later changes directory (e.g. to `backend/`). Example: `gh release create v$(npm run version:current --silent) --notes-file <(npm run release:notes --silent)`. Run `npm install` in the repo root so the devDependency `standard-version` is available.
 
-**Script `ship`:** Like in [elaborall](https://github.com/fgbona/elaborall) (and similar apps), `npm run ship` is wired to an external script at `/usr/local/bin/release`. That script can run `standard-version`, then create the GitHub release with curated notes. **Importante:** para obter a versão e as notas, usa sempre a partir da **raiz do repo** (antes de qualquer `cd`): `npm run version:current --silent` e `npm run release:notes --silent`. Se o script fizer `cd` para outro dir (ex.: `backend/`), `require('./package.json')` falha; por isso existe `scripts/version.js`, que resolve o `package.json` pela raiz.
-
-### Release notes ricas de uma vez por todas
-
-Para que o GitHub release saia com **texto completo** (bullets, API, frontend) em vez de uma linha só do commit:
-
-1. **Antes de criar o release**, crie o ficheiro **`scripts/release-notes-current.txt`** com o markdown que quiser no corpo do release (sem cabeçalho de versão; o GitHub já mostra a tag).
-2. Gere o release com:  
-   `gh release create v$(npm run version:current --silent) --notes-file <(npm run release:notes --silent)`  
-   (usa `version:current` para obter a versão a partir da raiz do repo, mesmo que o script faça `cd` para outro dir). Ou usa `npm run ship` se o teu script invocar `release:notes`.
-3. O `extract-release-notes.js` **usa esse ficheiro em vez do CHANGELOG** quando existe e não está vazio. Depois do release podes apagar ou esvaziar o ficheiro para a próxima vez usar o CHANGELOG outra vez.
-
-Assim não precisas de editar o `CHANGELOG.md` (que pode estar protegido por hook) e manténs um único fluxo: **release-notes-current.txt** = corpo do release.
-
-**Exemplo para v1.3.0** (colar em `scripts/release-notes-current.txt` antes de criar o release v1.3.0):
-
-```markdown
-### Features
-
-* **Scheduled scans + notifications**
-  * Backend: table `scan_schedules` (context, scope, namespace, cron, enabled); Alembic migration
-  * Scheduler: APScheduler runs scans at cron and stores results (no Redis)
-  * Notifications: optional `WEBHOOK_URL` and `SLACK_WEBHOOK_URL`; on critical/high findings send counts, top 3 findings, and scan link when `BASE_URL` is set
-  * API: CRUD `POST/GET/PUT/DELETE /api/schedules`
-  * Frontend: **Schedules** tab — create/edit/delete schedules, cron and enabled toggle
-  * Repository tests for schedule CRUD
-```
-
-**Exemplo para v1.2.0** (referência):
-
-```markdown
-### Features
-
-* **Incident Mode** — group analyses and scans into incidents with a timeline and export
-  * Backend: entities `incidents`, `incident_items`, `incident_notes`; Alembic migration
-  * API: `POST /api/incidents`, `POST /api/incidents/{id}/add`, `GET /api/incidents`, `GET /api/incidents/{id}` (timeline), `POST /api/incidents/{id}/export`, `POST /api/incidents/{id}/notes`
-  * Frontend: **Incidents** tab — create incident, add analysis/scan from history, add notes, view timeline, export Markdown or JSON
-  * Timeline: incident creation, items and notes ordered by `created_at`
-  * Repository tests for incident CRUD and timeline
-```
 
 ## Repository layout
 
