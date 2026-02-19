@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.4.0](https://github.com/fgbona/kubebeaver/compare/v1.3.1...v1.4.0) (2026-02-19)
+
+
+### Features
+
+* updated README.md ([af912b7](https://github.com/fgbona/kubebeaver/commit/af912b75cda0e6a8254c389c0ddb088a4b88304f))
+
 ### [1.3.1](https://github.com/fgbona/kubebeaver/compare/v1.3.0...v1.3.1) (2026-02-19)
 
 
