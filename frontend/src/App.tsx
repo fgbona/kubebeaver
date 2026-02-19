@@ -8,10 +8,12 @@ import {
   type ScanListItem,
   type ScanFindingItem,
   type CompareResponse,
+  type IncidentListItem,
+  type IncidentDetail,
 } from "./api";
 
 type Kind = "Pod" | "Deployment" | "StatefulSet" | "Node";
-type Tab = "analyze" | "scan";
+type Tab = "analyze" | "scan" | "incidents";
 
 const SEVERITY_ORDER: Record<string, number> = {
   critical: 4,
@@ -166,6 +168,26 @@ function App() {
   const [selectedFinding, setSelectedFinding] =
     useState<ScanFindingItem | null>(null);
   const [llmProviderLabel, setLlmProviderLabel] = useState<string>("");
+
+  // Incidents
+  const [incidentList, setIncidentList] = useState<IncidentListItem[]>([]);
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(
+    null,
+  );
+  const [incidentDetail, setIncidentDetail] = useState<IncidentDetail | null>(
+    null,
+  );
+  const [incidentCreateTitle, setIncidentCreateTitle] = useState("");
+  const [incidentCreateDesc, setIncidentCreateDesc] = useState("");
+  const [incidentCreateSeverity, setIncidentCreateSeverity] = useState("");
+  const [incidentError, setIncidentError] = useState<string | null>(null);
+  const [incidentLoading, setIncidentLoading] = useState(false);
+  const [addItemType, setAddItemType] = useState<"analysis" | "scan">(
+    "analysis",
+  );
+  const [addItemRefId, setAddItemRefId] = useState("");
+  const [addNoteContent, setAddNoteContent] = useState("");
+  const [exportLoading, setExportLoading] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try {
@@ -323,9 +345,22 @@ function App() {
       setScanList([]);
     }
   }, []);
+  const loadIncidentList = useCallback(async () => {
+    try {
+      const list = await api.incidents(50);
+      setIncidentList(list);
+    } catch {
+      setIncidentList([]);
+    }
+  }, []);
   useEffect(() => {
     if (tab === "scan") loadScanList();
-  }, [tab, loadScanList]);
+    if (tab === "incidents") {
+      loadIncidentList();
+      loadHistory();
+      loadScanList();
+    }
+  }, [tab, loadScanList, loadIncidentList, loadHistory]);
 
   const handleScan = async () => {
     if (scanScope === "namespace" && !scanNamespace.trim()) return;
@@ -350,6 +385,99 @@ function App() {
   };
 
   const showContextSelect = contexts.length > 1;
+
+  const handleCreateIncident = async () => {
+    if (!incidentCreateTitle.trim()) return;
+    setIncidentLoading(true);
+    setIncidentError(null);
+    try {
+      const { id } = await api.incidentCreate({
+        title: incidentCreateTitle.trim(),
+        description: incidentCreateDesc.trim() || undefined,
+        severity: incidentCreateSeverity || undefined,
+      });
+      setIncidentCreateTitle("");
+      setIncidentCreateDesc("");
+      setIncidentCreateSeverity("");
+      loadIncidentList();
+      setSelectedIncidentId(id);
+      const detail = await api.incidentGet(id);
+      setIncidentDetail(detail);
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const openIncidentDetail = async (id: string) => {
+    setSelectedIncidentId(id);
+    setIncidentError(null);
+    try {
+      const detail = await api.incidentGet(id);
+      setIncidentDetail(detail);
+    } catch (e) {
+      setIncidentError(String(e));
+      setIncidentDetail(null);
+    }
+  };
+
+  const handleAddItemToIncident = async () => {
+    if (!selectedIncidentId || !addItemRefId.trim()) return;
+    setIncidentLoading(true);
+    setIncidentError(null);
+    try {
+      await api.incidentAddItem(selectedIncidentId, {
+        type: addItemType,
+        ref_id: addItemRefId.trim(),
+      });
+      setAddItemRefId("");
+      const detail = await api.incidentGet(selectedIncidentId);
+      setIncidentDetail(detail);
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const handleAddNoteToIncident = async () => {
+    if (!selectedIncidentId || !addNoteContent.trim()) return;
+    setIncidentLoading(true);
+    setIncidentError(null);
+    try {
+      await api.incidentAddNote(selectedIncidentId, addNoteContent.trim());
+      setAddNoteContent("");
+      const detail = await api.incidentGet(selectedIncidentId);
+      setIncidentDetail(detail);
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const handleExportIncident = async (format: "markdown" | "json") => {
+    if (!selectedIncidentId) return;
+    setExportLoading(true);
+    setIncidentError(null);
+    try {
+      const content = await api.incidentExport(selectedIncidentId, format);
+      const blob = new Blob([content], {
+        type: format === "json" ? "application/json" : "text/markdown",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `incident-${selectedIncidentId.slice(0, 8)}.${format === "json" ? "json" : "md"}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setExportLoading(false);
+    }
+  };
 
   const filteredFindings = (scanResult?.findings ?? []).filter((f) => {
     if (scanFilterSeverity && f.severity !== scanFilterSeverity) return false;
@@ -392,8 +520,231 @@ function App() {
           >
             Scan
           </button>
+          <button
+            type="button"
+            className={tab === "incidents" ? "primary" : ""}
+            onClick={() => setTab("incidents")}
+          >
+            Incidents
+          </button>
         </div>
       </header>
+
+      {tab === "incidents" && (
+        <>
+          <div className="card">
+            <h2 style={{ marginTop: 0 }}>Incidents</h2>
+            <p style={{ color: "#666", marginBottom: 12 }}>
+              Group analyses and scans into incidents; add notes and export
+              timeline.
+            </p>
+            {incidentError && (
+              <div className="error-box" role="alert">
+                {incidentError}
+              </div>
+            )}
+            <div className="form-row">
+              <label>Title</label>
+              <input
+                type="text"
+                value={incidentCreateTitle}
+                onChange={(e) => setIncidentCreateTitle(e.target.value)}
+                placeholder="Incident title"
+                style={{ maxWidth: 400 }}
+              />
+            </div>
+            <div className="form-row">
+              <label>Description</label>
+              <textarea
+                value={incidentCreateDesc}
+                onChange={(e) => setIncidentCreateDesc(e.target.value)}
+                placeholder="Optional description"
+                rows={2}
+                style={{ maxWidth: 400 }}
+              />
+            </div>
+            <div className="form-row">
+              <label>Severity</label>
+              <select
+                value={incidentCreateSeverity}
+                onChange={(e) => setIncidentCreateSeverity(e.target.value)}
+              >
+                <option value="">—</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <button
+                onClick={handleCreateIncident}
+                disabled={incidentLoading || !incidentCreateTitle.trim()}
+              >
+                {incidentLoading ? "Creating…" : "Create incident"}
+              </button>
+            </div>
+          </div>
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>Incident list</h3>
+            <ul style={{ listStyle: "none", padding: 0 }}>
+              {incidentList.map((inc) => (
+                <li key={inc.id} style={{ marginBottom: 8 }}>
+                  <button
+                    type="button"
+                    className="link-button"
+                    style={{
+                      textAlign: "left",
+                      border:
+                        selectedIncidentId === inc.id
+                          ? "2px solid #1976d2"
+                          : "1px solid #eee",
+                      padding: 8,
+                      borderRadius: 4,
+                      width: "100%",
+                    }}
+                    onClick={() => openIncidentDetail(inc.id)}
+                  >
+                    {inc.title}
+                    {inc.severity && (
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          fontSize: 11,
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {inc.severity}
+                      </span>
+                    )}{" "}
+                    – {new Date(inc.created_at).toLocaleString()}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {incidentList.length === 0 && (
+              <p style={{ color: "#666" }}>No incidents yet.</p>
+            )}
+          </div>
+          {incidentDetail && (
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>
+                {incidentDetail.title}
+                {incidentDetail.severity && (
+                  <span style={{ marginLeft: 8, fontSize: 14 }}>
+                    [{incidentDetail.severity}]
+                  </span>
+                )}
+              </h3>
+              {incidentDetail.description && (
+                <p style={{ color: "#555", marginBottom: 12 }}>
+                  {incidentDetail.description}
+                </p>
+              )}
+              <p style={{ fontSize: 12, color: "#666" }}>
+                Created {new Date(incidentDetail.created_at).toLocaleString()} •
+                Status: {incidentDetail.status}
+              </p>
+              <h4 style={{ marginTop: 16 }}>Timeline</h4>
+              <ul style={{ listStyle: "none", padding: 0 }}>
+                {(incidentDetail.timeline || []).map((entry, idx) => (
+                  <li
+                    key={idx}
+                    style={{
+                      marginBottom: 8,
+                      paddingLeft: 12,
+                      borderLeft: "2px solid #ddd",
+                    }}
+                  >
+                    {entry.type === "incident_created" && (
+                      <>Incident created at {entry.created_at}</>
+                    )}
+                    {entry.type === "item" && (
+                      <>
+                        {entry.item_type} <code>{entry.ref_id}</code> at{" "}
+                        {entry.created_at}
+                      </>
+                    )}
+                    {entry.type === "note" && (
+                      <>
+                        Note at {entry.created_at}: {entry.content}
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <h4 style={{ marginTop: 16 }}>Add from history</h4>
+              <div className="form-row" style={{ flexWrap: "wrap", gap: 8 }}>
+                <select
+                  value={addItemType}
+                  onChange={(e) =>
+                    setAddItemType(e.target.value as "analysis" | "scan")
+                  }
+                >
+                  <option value="analysis">Analysis</option>
+                  <option value="scan">Scan</option>
+                </select>
+                <select
+                  value={addItemRefId}
+                  onChange={(e) => setAddItemRefId(e.target.value)}
+                  style={{ minWidth: 200 }}
+                >
+                  <option value="">Select…</option>
+                  {addItemType === "analysis" &&
+                    history.map((h) => (
+                      <option key={h.id} value={h.id}>
+                        {h.kind} {h.name} – {h.created_at}
+                      </option>
+                    ))}
+                  {addItemType === "scan" &&
+                    scanList.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.scope} {s.namespace || ""} – {s.created_at}
+                      </option>
+                    ))}
+                </select>
+                <button
+                  onClick={handleAddItemToIncident}
+                  disabled={incidentLoading || !addItemRefId.trim()}
+                >
+                  Add
+                </button>
+              </div>
+              <h4 style={{ marginTop: 16 }}>Add note</h4>
+              <div className="form-row" style={{ flexWrap: "wrap", gap: 8 }}>
+                <input
+                  type="text"
+                  value={addNoteContent}
+                  onChange={(e) => setAddNoteContent(e.target.value)}
+                  placeholder="Note content"
+                  style={{ flex: 1, minWidth: 200 }}
+                />
+                <button
+                  onClick={handleAddNoteToIncident}
+                  disabled={incidentLoading || !addNoteContent.trim()}
+                >
+                  Add note
+                </button>
+              </div>
+              <h4 style={{ marginTop: 16 }}>Export</h4>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => handleExportIncident("markdown")}
+                  disabled={exportLoading}
+                >
+                  {exportLoading ? "Exporting…" : "Export Markdown"}
+                </button>
+                <button
+                  onClick={() => handleExportIncident("json")}
+                  disabled={exportLoading}
+                >
+                  Export JSON
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {tab === "scan" && (
         <>

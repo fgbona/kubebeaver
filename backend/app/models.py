@@ -133,3 +133,45 @@ class CompareResponse(BaseModel):
     analysis_a: dict[str, Any] = Field(default_factory=dict)  # metadata for UI
     analysis_b: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+
+
+# --- Incidents ---
+
+
+class CreateIncidentRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500)
+    description: str | None = None
+    severity: str | None = None  # low|medium|high|critical
+    tags: list[str] = Field(default_factory=list)
+
+
+class AddIncidentItemRequest(BaseModel):
+    type: str = Field(..., pattern="^(analysis|scan)$")
+    ref_id: str = Field(..., min_length=1)
+
+
+class ExportIncidentRequest(BaseModel):
+    format: str = Field(..., pattern="^(markdown|json)$")
+
+
+class IncidentListItem(BaseModel):
+    id: str
+    created_at: str
+    title: str
+    description: str | None
+    severity: str | None
+    tags: list[str] = Field(default_factory=list)
+    status: str = "open"
+
+
+class IncidentDetail(BaseModel):
+    id: str
+    created_at: str
+    title: str
+    description: str | None
+    severity: str | None
+    tags: list[str] = Field(default_factory=list)
+    status: str
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    notes: list[dict[str, Any]] = Field(default_factory=list)
+    timeline: list[dict[str, Any]] = Field(default_factory=list)
