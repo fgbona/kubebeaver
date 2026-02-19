@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import urllib3
 from typing import Any
 
 from kubernetes import client, config
@@ -10,16 +11,19 @@ from kubernetes.config.config_exception import ConfigException
 
 from app.config import settings
 
+# Disable SSL warnings for self-signed certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 logger = logging.getLogger(__name__)
 
-# Load once; can be refreshed if needed
-_core_v1: client.CoreV1Api | None = None
-_apps_v1: client.AppsV1Api | None = None
+# Cache clients per context to avoid reloading unnecessarily
+_clients_by_context: dict[str | None, tuple[client.CoreV1Api, client.AppsV1Api]] = {}
+_current_context: str | None = None
 _metrics_available: bool | None = None
 
 
-def _load_config(context: str | None = None) -> None:
-    global _core_v1, _apps_v1
+def _load_config(context: str | None = None) -> tuple[client.CoreV1Api, client.AppsV1Api]:
+    """Load Kubernetes config for a specific context and return API clients."""
     try:
         if settings.in_cluster:
             config.load_incluster_config()
@@ -30,22 +34,49 @@ def _load_config(context: str | None = None) -> None:
     except ConfigException as e:
         logger.warning("Kubernetes config not available: %s", e)
         raise
-    _core_v1 = client.CoreV1Api()
-    _apps_v1 = client.AppsV1Api()
+    
+    # Create a configuration with SSL verification disabled for environments with self-signed certificates
+    # This is common in internal/development environments (e.g., Rancher)
+    configuration = client.Configuration.get_default_copy()
+    configuration.verify_ssl = False
+    configuration.ssl_ca_cert = None
+    
+    # Create API clients with the custom configuration
+    core_v1 = client.CoreV1Api(api_client=client.ApiClient(configuration))
+    apps_v1 = client.AppsV1Api(api_client=client.ApiClient(configuration))
+    return core_v1, apps_v1
 
 
 def get_core_v1(context: str | None = None) -> client.CoreV1Api:
-    if _core_v1 is None:
-        _load_config(context)
-    assert _core_v1 is not None
-    return _core_v1
+    """Get CoreV1Api client for the specified context. Creates new client if context changed."""
+    global _clients_by_context
+    
+    # Check if we already have clients for this context
+    if context in _clients_by_context:
+        core_v1, _ = _clients_by_context[context]
+        return core_v1
+    
+    # Load config and create new clients for this context
+    core_v1, apps_v1 = _load_config(context)
+    _clients_by_context[context] = (core_v1, apps_v1)
+    logger.debug("Created new Kubernetes clients for context: %s", context)
+    return core_v1
 
 
 def get_apps_v1(context: str | None = None) -> client.AppsV1Api:
-    if _apps_v1 is None:
-        _load_config(context)
-    assert _apps_v1 is not None
-    return _apps_v1
+    """Get AppsV1Api client for the specified context. Creates new client if context changed."""
+    global _clients_by_context
+    
+    # Check if we already have clients for this context
+    if context in _clients_by_context:
+        _, apps_v1 = _clients_by_context[context]
+        return apps_v1
+    
+    # Load config and create new clients for this context
+    core_v1, apps_v1 = _load_config(context)
+    _clients_by_context[context] = (core_v1, apps_v1)
+    logger.debug("Created new Kubernetes clients for context: %s", context)
+    return apps_v1
 
 
 def list_contexts() -> list[dict[str, str]]:
@@ -66,9 +97,12 @@ def list_contexts() -> list[dict[str, str]]:
 
 def list_namespaces(context: str | None = None) -> list[str]:
     try:
+        logger.info("list_namespaces called with context=%s", context)
         core = get_core_v1(context)
         ret = core.list_namespace(limit=500)
-        return [ns.metadata.name for ns in ret.items]
+        namespaces = [ns.metadata.name for ns in ret.items]
+        logger.info("list_namespaces returned %d namespaces for context=%s", len(namespaces), context)
+        return namespaces
     except ApiException as e:
         logger.warning("list_namespaces API error: %s", e.reason)
         raise

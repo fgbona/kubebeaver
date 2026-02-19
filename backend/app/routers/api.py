@@ -88,15 +88,24 @@ async def get_contexts() -> list[dict[str, Any]]:
 
 
 @router.get("/namespaces")
-async def get_namespaces(context: str | None = None) -> list[str]:
+async def get_namespaces(context: str | None = None, no_cache: bool = False) -> list[str]:
     ctx = context if context and context.strip() else None
     key = cache_key("namespaces", ctx or "")
-    cached = await cache_get(key)
-    if cached is not None:
-        return cached
+    logger.info("get_namespaces called with context=%s, cache_key=%s, no_cache=%s", ctx, key, no_cache)
+    
+    if not no_cache:
+        cached = await cache_get(key)
+        if cached is not None:
+            logger.info("Returning cached namespaces for context=%s, count=%d", ctx, len(cached))
+            return cached
+    
     try:
+        logger.info("Loading namespaces from Kubernetes for context=%s", ctx)
         data = list_namespaces(context=ctx)
+        logger.info("Loaded %d namespaces for context=%s: %s", len(data), ctx, data[:5] if data else [])
+        logger.info("Full namespaces list: %s", data)
         await cache_set(key, data, settings.cache_ttl_namespaces)
+        logger.info("Returning %d namespaces to client", len(data))
         return data
     except Exception as e:
         logger.warning("list_namespaces failed: %s", e)
