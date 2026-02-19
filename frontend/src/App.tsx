@@ -914,7 +914,15 @@ function App() {
               <h3 style={{ marginTop: 0 }}>Incident list</h3>
               <ul style={{ listStyle: "none", padding: 0 }}>
                 {incidentList.map((inc) => (
-                  <li key={inc.id} style={{ marginBottom: 8 }}>
+                  <li
+                    key={inc.id}
+                    style={{
+                      marginBottom: 8,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
                     <button
                       type="button"
                       className="link-button"
@@ -926,7 +934,7 @@ function App() {
                             : "1px solid #eee",
                         padding: 8,
                         borderRadius: 4,
-                        width: "100%",
+                        flex: 1,
                       }}
                       onClick={() => openIncidentDetail(inc.id)}
                     >
@@ -943,6 +951,37 @@ function App() {
                         </span>
                       )}{" "}
                       – {new Date(inc.created_at).toLocaleString()}
+                    </button>
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (confirm(`Delete incident "${inc.title}"?`)) {
+                          try {
+                            await api.incidentDelete(inc.id);
+                            // Remove from local state immediately
+                            setIncidentList((prev) =>
+                              prev.filter((item) => item.id !== inc.id),
+                            );
+                            // Clear detail if this incident was selected
+                            if (selectedIncidentId === inc.id) {
+                              setSelectedIncidentId(null);
+                              setIncidentDetail(null);
+                            }
+                          } catch (e) {
+                            setIncidentError(`Failed to delete: ${e}`);
+                          }
+                        }
+                      }}
+                      style={{
+                        color: "#c62828",
+                        fontSize: 12,
+                        padding: "4px 8px",
+                      }}
+                      title="Delete this incident"
+                    >
+                      ✕
                     </button>
                   </li>
                 ))}

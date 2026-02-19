@@ -265,6 +265,7 @@ export const api = {
       limit != null ? { limit: String(limit) } : undefined,
     ),
   incidentGet: (id: string) => get<IncidentDetail>(`/incidents/${id}`),
+  incidentDelete: (id: string) => del<{ message: string }>(`/incidents/${id}`),
   incidentCreate: (body: CreateIncidentRequest) =>
     post<{ id: string }>("/incidents", body),
   incidentAddItem: (incidentId: string, body: AddIncidentItemRequest) =>
