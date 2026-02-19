@@ -33,7 +33,7 @@ from app.models import (
 )
 from app.k8s_client import list_contexts, list_namespaces, list_resources, check_connection
 from app.analyzer import run_analysis
-from app.history import save_analysis, list_analyses, get_analysis, init_db
+from app.history import save_analysis, list_analyses, get_analysis, delete_analysis, init_db
 from app.scan_service import execute_and_save_scan, list_scans as list_scans_svc, get_scan as get_scan_svc
 from app.compare_service import run_compare
 from app.incident_service import (
@@ -43,6 +43,7 @@ from app.incident_service import (
     list_incidents,
     get_incident_with_timeline,
     export_incident,
+    delete_incident,
 )
 from app.schedule_service import (
     create_schedule,
@@ -221,8 +222,9 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
 
 
 @router.get("/history")
-async def history(limit: int = 50) -> list[dict[str, Any]]:
-    return await list_analyses(limit=limit)
+async def history(limit: int = 50, context: str | None = None) -> list[dict[str, Any]]:
+    """List recent analyses, optionally filtered by context."""
+    return await list_analyses(limit=limit, context=context)
 
 
 @router.get("/history/{analysis_id}")
@@ -231,6 +233,15 @@ async def history_get(analysis_id: str) -> dict[str, Any]:
     if not row:
         raise HTTPException(status_code=404, detail="Analysis not found")
     return row
+
+
+@router.delete("/history/{analysis_id}")
+async def history_delete(analysis_id: str) -> dict[str, str]:
+    """Delete an analysis by ID."""
+    deleted = await delete_analysis(analysis_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    return {"message": "Analysis deleted successfully"}
 
 
 @router.get("/analysis/{analysis_id}/explain")
@@ -375,6 +386,15 @@ async def incidents_export(incident_id: str, req: ExportIncidentRequest) -> Resp
         raise HTTPException(status_code=404, detail="Incident not found")
     content, media_type = result
     return Response(content=content, media_type=media_type)
+
+
+@router.delete("/incidents/{incident_id}")
+async def incidents_delete(incident_id: str) -> dict[str, str]:
+    """Delete an incident by ID."""
+    deleted = await delete_incident(incident_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {"message": "Incident deleted successfully"}
 
 
 @router.post("/incidents/{incident_id}/notes", status_code=201)

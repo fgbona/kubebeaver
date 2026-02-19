@@ -87,6 +87,14 @@ def _ref_summary(item_type: str, ref_id: str, resolved: dict[str, Any] | None) -
     }
 
 
+async def delete_incident(incident_id: str) -> bool:
+    """Delete incident by ID. Returns True if deleted, False if not found."""
+    async_session_maker = get_session_maker()
+    async with async_session_maker() as session:
+        repo = IncidentRepository(session)
+        return await repo.delete_incident(incident_id)
+
+
 async def export_incident(incident_id: str, fmt: str) -> tuple[str, str] | None:
     """
     Export incident as markdown or JSON. Deterministic and reproducible.
