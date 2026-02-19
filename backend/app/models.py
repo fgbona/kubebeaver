@@ -177,6 +177,26 @@ class ExportIncidentRequest(BaseModel):
     format: str = Field(..., pattern="^(markdown|json)$")
 
 
+class UpdateIncidentRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    status: str | None = None  # open|mitigating|resolved
+    severity: str | None = None  # info|low|medium|high|critical
+    tags: list[str] | None = None
+
+
+class CreateIncidentFromScanRequest(BaseModel):
+    scan_id: str = Field(..., min_length=1)
+    title: str | None = None
+    severity: str | None = None
+
+
+class CreateIncidentFromAnalysisRequest(BaseModel):
+    analysis_id: str = Field(..., min_length=1)
+    title: str | None = None
+    severity: str | None = None
+
+
 class IncidentListItem(BaseModel):
     id: str
     created_at: str
@@ -185,16 +205,21 @@ class IncidentListItem(BaseModel):
     severity: str | None
     tags: list[str] = Field(default_factory=list)
     status: str = "open"
+    items_count: int = 0
+    notes_count: int = 0
 
 
 class IncidentDetail(BaseModel):
     id: str
     created_at: str
+    updated_at: str | None = None
     title: str
     description: str | None
     severity: str | None
     tags: list[str] = Field(default_factory=list)
     status: str
+    items_count: int = 0
+    notes_count: int = 0
     items: list[dict[str, Any]] = Field(default_factory=list)
     notes: list[dict[str, Any]] = Field(default_factory=list)
     timeline: list[dict[str, Any]] = Field(default_factory=list)

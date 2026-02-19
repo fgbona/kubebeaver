@@ -1,0 +1,2891 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+import ReactMarkdown from "react-markdown";
+import {
+  api,
+  type AnalyzeResponse,
+  type HistoryItem,
+  type ScanResponse,
+  type ScanListItem,
+  type ScanFindingItem,
+  type CompareResponse,
+  type IncidentListItem,
+  type IncidentDetail,
+  type ScheduleListItem,
+} from "./api";
+
+type Kind = "Pod" | "Deployment" | "StatefulSet" | "Node";
+type Tab = "analyze" | "scan" | "incidents" | "schedules";
+
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+  info: 0,
+};
+
+/** Tokenize JSON string for jq-style syntax highlighting (preserves formatting) */
+function tokenizeJson(text: string): { type: string; value: string }[] {
+  const tokens: { type: string; value: string }[] = [];
+  let i = 0;
+  const emitWs = () => {
+    let val = "";
+    while (i < text.length && /[\s\n\r\t]/.test(text[i])) {
+      val += text[i];
+      i++;
+    }
+    if (val.length > 0) tokens.push({ type: "ws", value: val });
+  };
+  while (i < text.length) {
+    emitWs();
+    if (i >= text.length) break;
+    if (text[i] === '"') {
+      let val = '"';
+      i++;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === "\\") {
+          val += text[i] + (text[i + 1] ?? "");
+          i += 2;
+        } else {
+          val += text[i];
+          i++;
+        }
+      }
+      if (text[i] === '"') val += '"';
+      i++;
+      emitWs();
+      const isKey = i < text.length && text[i] === ":";
+      tokens.push({ type: isKey ? "key" : "string", value: val });
+      continue;
+    }
+    if (/[-0-9]/.test(text[i])) {
+      let val = "";
+      while (i < text.length && /[-+eE.0-9]/.test(text[i])) {
+        val += text[i];
+        i++;
+      }
+      tokens.push({ type: "number", value: val });
+      continue;
+    }
+    if (text.slice(i, i + 4) === "true") {
+      tokens.push({ type: "bool", value: "true" });
+      i += 4;
+      continue;
+    }
+    if (text.slice(i, i + 5) === "false") {
+      tokens.push({ type: "bool", value: "false" });
+      i += 5;
+      continue;
+    }
+    if (text.slice(i, i + 4) === "null") {
+      tokens.push({ type: "null", value: "null" });
+      i += 4;
+      continue;
+    }
+    if (/[{}[\]:,]/.test(text[i])) {
+      tokens.push({ type: "punct", value: text[i] });
+      i++;
+      continue;
+    }
+    tokens.push({ type: "raw", value: text[i] });
+    i++;
+  }
+  return tokens;
+}
+
+/** Pretty-print JSON string for display; returns original if not valid JSON. */
+function prettyJson(text: string): string {
+  const trimmed = text.trim();
+  if (!/^[{\[]/.test(trimmed)) return text;
+  try {
+    const parsed = JSON.parse(text);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return text;
+  }
+}
+
+function JsonHighlight({ text }: { text: string }) {
+  const tokens = tokenizeJson(text);
+  return (
+    <code
+      className="json-highlight"
+      style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}
+    >
+      {tokens.map((t, i) => (
+        <span key={i} className={t.type === "ws" ? "" : `jq-${t.type}`}>
+          {t.type === "ws"
+            ? t.value
+            : t.value.replace(/</g, "&lt;").replace(/&/g, "&amp;")}
+        </span>
+      ))}
+    </code>
+  );
+}
+
+function App() {
+  const [tab, setTab] = useState<Tab>("analyze");
+  const [contexts, setContexts] = useState<
+    { name: string; current: boolean }[]
+  >([]);
+  const [selectedContext, setSelectedContext] = useState<string>("");
+  const [namespaces, setNamespaces] = useState<string[]>([]);
+  const [selectedNamespace, setSelectedNamespace] = useState<string>("");
+  const contextRef = useRef<string>("");
+  const namespaceKeyRef = useRef<number>(0);
+  const isLoadingNamespacesRef = useRef<boolean>(false);
+  const [kind, setKind] = useState<Kind>("Pod");
+  const [resourceNames, setResourceNames] = useState<
+    { name: string; namespace: string | null; kind: string }[]
+  >([]);
+  const [selectedName, setSelectedName] = useState<string>("");
+  const [includePreviousLogs, setIncludePreviousLogs] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<AnalyzeResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [explainOpen, setExplainOpen] = useState(false);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [viewHistoryId, setViewHistoryId] = useState<string | null>(null);
+  const [historyDetail, setHistoryDetail] = useState<
+    | (HistoryItem & {
+        analysis_markdown?: string;
+        analysis_json?: import("./api").AnalysisJson;
+      })
+    | null
+  >(null);
+  const [compareSelectedIds, setCompareSelectedIds] = useState<string[]>([]);
+  const [compareResult, setCompareResult] = useState<CompareResponse | null>(
+    null,
+  );
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
+
+  // Scan state
+  const [scanScope, setScanScope] = useState<"namespace" | "cluster">(
+    "namespace",
+  );
+  const [scanNamespace, setScanNamespace] = useState<string>("");
+  const [scanIncludeLogs, setScanIncludeLogs] = useState(false);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanResult, setScanResult] = useState<ScanResponse | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanList, setScanList] = useState<ScanListItem[]>([]);
+  const [scanFilterSeverity, setScanFilterSeverity] = useState<string>("");
+  const [scanFilterCategory, setScanFilterCategory] = useState<string>("");
+  const [selectedFinding, setSelectedFinding] =
+    useState<ScanFindingItem | null>(null);
+  const [llmProviderLabel, setLlmProviderLabel] = useState<string>("");
+
+  // Incidents
+  const [incidentList, setIncidentList] = useState<IncidentListItem[]>([]);
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(
+    null,
+  );
+  const [incidentDetail, setIncidentDetail] = useState<IncidentDetail | null>(
+    null,
+  );
+  const [incidentCreateTitle, setIncidentCreateTitle] = useState("");
+  const [incidentCreateDesc, setIncidentCreateDesc] = useState("");
+  const [incidentCreateSeverity, setIncidentCreateSeverity] = useState("");
+  const [incidentError, setIncidentError] = useState<string | null>(null);
+  const [incidentLoading, setIncidentLoading] = useState(false);
+  const [addItemType, setAddItemType] = useState<"analysis" | "scan">(
+    "analysis",
+  );
+  const [addItemRefId, setAddItemRefId] = useState("");
+  const [addNoteContent, setAddNoteContent] = useState("");
+  const [exportLoading, setExportLoading] = useState(false);
+  const [showAddToIncident, setShowAddToIncident] = useState(false);
+  const [addToIncidentSearch, setAddToIncidentSearch] = useState("");
+  const [creatingIncidentFromScan, setCreatingIncidentFromScan] =
+    useState(false);
+  const [creatingIncidentFromAnalysis, setCreatingIncidentFromAnalysis] =
+    useState(false);
+
+  // Schedules
+  const [scheduleList, setScheduleList] = useState<ScheduleListItem[]>([]);
+  const [scheduleCreateContext, setScheduleCreateContext] = useState("");
+  const [scheduleCreateScope, setScheduleCreateScope] = useState<
+    "namespace" | "cluster"
+  >("namespace");
+  const [scheduleCreateNamespace, setScheduleCreateNamespace] = useState("");
+  const [scheduleCreateCron, setScheduleCreateCron] = useState("0 * * * *");
+  const [scheduleCreateEnabled, setScheduleCreateEnabled] = useState(true);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(
+    null,
+  );
+  const [editScheduleCron, setEditScheduleCron] = useState("");
+  const [editScheduleEnabled, setEditScheduleEnabled] = useState(true);
+
+  const loadHealth = useCallback(async () => {
+    try {
+      const h = await api.health();
+      setLlmProviderLabel(
+        h.llm_provider === "groq" ? "Groq" : h.llm_provider ? "Local" : "",
+      );
+    } catch {
+      setLlmProviderLabel("");
+    }
+  }, []);
+
+  const loadContexts = useCallback(
+    async (preserveCurrent: boolean = false) => {
+      try {
+        const list = await api.contexts();
+        const currentSelectedContext = selectedContext; // Capture current value
+        console.log(
+          "[loadContexts] Called with preserveCurrent=",
+          preserveCurrent,
+          "current context=",
+          currentSelectedContext,
+        );
+
+        setContexts(list);
+
+        // If preserveCurrent is true and we already have a selected context, keep it
+        if (preserveCurrent && currentSelectedContext) {
+          // Verify the selected context still exists in the list
+          const contextExists = list.some(
+            (c) => c.name === currentSelectedContext,
+          );
+          if (contextExists) {
+            // Context is still valid, keep it
+            console.log(
+              "[loadContexts] Preserving context:",
+              currentSelectedContext,
+            );
+            return;
+          }
+          // Context no longer exists, fall through to set a new one
+          console.log(
+            "[loadContexts] Context",
+            currentSelectedContext,
+            "no longer exists, will set new one",
+          );
+        }
+
+        // Set initial context (either first time or when preserveCurrent is false)
+        const current = list.find((c) => c.current);
+        const initialContext = current ? current.name : (list[0]?.name ?? "");
+        if (initialContext) {
+          // Only update if we don't have a selected context or if preserveCurrent is false
+          if (!currentSelectedContext || !preserveCurrent) {
+            if (initialContext !== currentSelectedContext) {
+              console.log(
+                "[loadContexts] Setting context from",
+                currentSelectedContext,
+                "to",
+                initialContext,
+              );
+              contextRef.current = initialContext;
+              setSelectedContext(initialContext);
+            }
+          } else {
+            console.log(
+              "[loadContexts] Skipping context change - preserveCurrent=true and context exists",
+            );
+          }
+        }
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [selectedContext],
+  );
+
+  const loadNamespaces = useCallback(
+    async (forContext?: string) => {
+      const contextToUse = forContext ?? selectedContext;
+      if (!contextToUse && contexts.length > 0) return;
+
+      console.log(
+        "[loadNamespaces] Loading namespaces for context:",
+        contextToUse,
+      );
+
+      try {
+        const list = await api.namespaces(
+          contextToUse ? contextToUse : undefined,
+        );
+        console.log(
+          "[loadNamespaces] Received namespaces:",
+          list.length,
+          "for context:",
+          contextToUse,
+        );
+        // Always update - we're loading for the current context
+        setNamespaces(list);
+        // Always reset to first namespace when loading
+        if (list.length > 0) {
+          setSelectedNamespace(list[0]);
+        } else {
+          setSelectedNamespace("");
+        }
+      } catch (e) {
+        console.error("[loadNamespaces] Error loading namespaces:", e);
+        setNamespaces([]);
+        setSelectedNamespace("");
+      }
+    },
+    [selectedContext, contexts.length],
+  );
+
+  // Handler to change context and clear related state
+  const handleContextChange = useCallback(
+    async (newContext: string) => {
+      console.log(
+        "[handleContextChange] Changing context from",
+        selectedContext,
+        "to",
+        newContext,
+      );
+      // Mark that we're loading namespaces to prevent useEffect from interfering
+      isLoadingNamespacesRef.current = true;
+      // Increment key to force React to recreate namespace selects
+      namespaceKeyRef.current += 1;
+      // Update ref immediately
+      contextRef.current = newContext;
+      // Clear namespaces and related state immediately
+      setNamespaces([]);
+      setSelectedNamespace("");
+      setScanNamespace("");
+      setScheduleCreateNamespace("");
+      // Update context
+      setSelectedContext(newContext);
+      // Load namespaces for new context immediately - call API directly with no_cache to bypass cache
+      try {
+        const list = await api.namespaces(newContext, true);
+        console.log(
+          "[handleContextChange] Loaded",
+          list.length,
+          "namespaces for context:",
+          newContext,
+          "full list:",
+          list,
+        );
+        // Verify context hasn't changed during async call
+        if (contextRef.current === newContext) {
+          console.log(
+            "[handleContextChange] Setting namespaces state with",
+            list.length,
+            "items",
+          );
+          setNamespaces(list);
+          if (list.length > 0) {
+            setSelectedNamespace(list[0]);
+            console.log(
+              "[handleContextChange] Set selectedNamespace to:",
+              list[0],
+            );
+          } else {
+            setSelectedNamespace("");
+          }
+        } else {
+          console.log(
+            "[handleContextChange] Context changed during async call, ignoring result",
+          );
+        }
+      } catch (e) {
+        console.error("[handleContextChange] Error loading namespaces:", e);
+        if (contextRef.current === newContext) {
+          setNamespaces([]);
+          setSelectedNamespace("");
+        }
+      } finally {
+        // Allow useEffect to run again after a short delay
+        setTimeout(() => {
+          isLoadingNamespacesRef.current = false;
+        }, 100);
+      }
+    },
+    [selectedContext],
+  );
+
+  const loadResources = useCallback(async () => {
+    const ns = kind === "Node" ? undefined : selectedNamespace;
+    if (kind !== "Node" && !ns) {
+      setResourceNames([]);
+      return;
+    }
+    try {
+      const list = await api.resources({
+        namespace: ns || "",
+        kind,
+        context: selectedContext ? selectedContext : undefined,
+      });
+      setResourceNames(list);
+      if (!list.some((r) => r.name === selectedName))
+        setSelectedName(list[0]?.name ?? "");
+    } catch (e) {
+      setResourceNames([]);
+    }
+  }, [kind, selectedNamespace, selectedContext, selectedName]);
+
+  useEffect(() => {
+    loadHealth();
+  }, [loadHealth]);
+  useEffect(() => {
+    // Only set initial context on mount, preserve user selection afterwards
+    loadContexts(false);
+  }, []); // Empty deps - only run on mount
+  // Load namespaces when context changes (only for initial load, manual changes use handleContextChange)
+  useEffect(() => {
+    // Skip if handleContextChange is currently loading namespaces
+    if (isLoadingNamespacesRef.current) {
+      console.log(
+        "[useEffect] Skipping - handleContextChange is loading namespaces",
+      );
+      return;
+    }
+
+    if (selectedContext && contexts.length > 0) {
+      // Check if this is the initial load (ref is empty) or if context changed externally
+      const isInitialLoad = !contextRef.current;
+      const contextChanged =
+        contextRef.current && contextRef.current !== selectedContext;
+
+      if (isInitialLoad || contextChanged) {
+        console.log(
+          "[useEffect] Loading namespaces for context:",
+          selectedContext,
+          "isInitial:",
+          isInitialLoad,
+        );
+        contextRef.current = selectedContext;
+        loadNamespaces();
+      }
+    }
+  }, [selectedContext, loadNamespaces, contexts.length]);
+  useEffect(() => {
+    loadResources();
+  }, [loadResources]);
+
+  const handleAnalyze = async () => {
+    if (!selectedName.trim()) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await api.analyze({
+        context: selectedContext || undefined,
+        namespace: kind === "Node" ? undefined : selectedNamespace || undefined,
+        kind,
+        name: selectedName.trim(),
+        include_previous_logs: includePreviousLogs,
+      });
+      setResult(res);
+      setEvidenceOpen(false);
+      loadHistory();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadHistory = useCallback(async () => {
+    try {
+      // Filter history by selected context
+      const list = await api.history(30, selectedContext || undefined);
+      setHistory(list);
+    } catch {
+      setHistory([]);
+    }
+  }, [selectedContext]);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory, selectedContext]); // Reload when context changes
+
+  const openHistoryDetail = async (id: string) => {
+    setViewHistoryId(id);
+    try {
+      const detail = await api.historyGet(id);
+      setHistoryDetail(detail);
+    } catch {
+      setHistoryDetail(null);
+    }
+  };
+
+  const toggleCompareSelection = (id: string) => {
+    setCompareSelectedIds((prev) =>
+      prev.includes(id)
+        ? prev.filter((x) => x !== id)
+        : prev.length >= 2
+          ? [...prev.slice(1), id]
+          : [...prev, id],
+    );
+  };
+
+  const runCompare = async () => {
+    if (compareSelectedIds.length !== 2) return;
+    setCompareLoading(true);
+    setCompareError(null);
+    setCompareResult(null);
+    try {
+      const res = await api.compare({
+        analysis_id_a: compareSelectedIds[0],
+        analysis_id_b: compareSelectedIds[1],
+      });
+      setCompareResult(res);
+    } catch (e) {
+      setCompareError(String(e));
+    } finally {
+      setCompareLoading(false);
+    }
+  };
+
+  const copyKubectlCommands = (commands: string[]) => {
+    const text = commands.join("\n");
+    navigator.clipboard.writeText(text);
+  };
+
+  const loadScanList = useCallback(async () => {
+    try {
+      const list = await api.scans(30);
+      setScanList(list);
+    } catch {
+      setScanList([]);
+    }
+  }, []);
+  const loadIncidentList = useCallback(async () => {
+    try {
+      const list = await api.incidents(50);
+      setIncidentList(list);
+    } catch {
+      setIncidentList([]);
+    }
+  }, []);
+
+  const loadScheduleList = useCallback(async () => {
+    try {
+      const list = await api.schedules(100);
+      setScheduleList(list);
+    } catch {
+      setScheduleList([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    console.log(
+      "[useEffect tab] Tab changed to:",
+      tab,
+      "selectedContext:",
+      selectedContext,
+    );
+
+    if (tab === "scan") {
+      loadScanList();
+      // Preserve current context when switching tabs - use current selectedContext value
+      if (selectedContext) {
+        loadContexts(true);
+        loadNamespaces();
+      } else {
+        // No context selected yet, load initial one
+        loadContexts(false);
+      }
+    }
+    if (tab === "incidents") {
+      loadIncidentList();
+      loadHistory();
+      loadScanList();
+      // Preserve current context when switching tabs
+      if (selectedContext) {
+        loadContexts(true);
+        loadNamespaces();
+      } else {
+        loadContexts(false);
+      }
+    }
+    if (tab === "schedules") {
+      loadScheduleList();
+      // Preserve current context when switching tabs
+      if (selectedContext) {
+        loadContexts(true);
+        loadNamespaces();
+      } else {
+        loadContexts(false);
+      }
+    }
+    if (tab === "analyze") {
+      // Preserve current context when switching tabs
+      if (selectedContext) {
+        loadContexts(true);
+        loadNamespaces();
+      } else {
+        loadContexts(false);
+      }
+    }
+  }, [
+    tab,
+    selectedContext,
+    loadScanList,
+    loadIncidentList,
+    loadHistory,
+    loadScheduleList,
+    loadContexts,
+    loadNamespaces,
+  ]);
+
+  const handleScan = async () => {
+    if (scanScope === "namespace" && !scanNamespace.trim()) return;
+    setScanLoading(true);
+    setScanError(null);
+    setScanResult(null);
+    setSelectedFinding(null);
+    try {
+      const res = await api.scan({
+        context: selectedContext || undefined,
+        scope: scanScope,
+        namespace: scanScope === "namespace" ? scanNamespace.trim() : undefined,
+        include_logs: scanIncludeLogs,
+      });
+      setScanResult(res);
+      loadScanList();
+    } catch (e) {
+      setScanError(String(e));
+    } finally {
+      setScanLoading(false);
+    }
+  };
+
+  const showContextSelect = contexts.length > 1;
+
+  const handleCreateIncident = async () => {
+    if (!incidentCreateTitle.trim()) return;
+    setIncidentLoading(true);
+    setIncidentError(null);
+    try {
+      const { id } = await api.incidentCreate({
+        title: incidentCreateTitle.trim(),
+        description: incidentCreateDesc.trim() || undefined,
+        severity: incidentCreateSeverity || undefined,
+      });
+      setIncidentCreateTitle("");
+      setIncidentCreateDesc("");
+      setIncidentCreateSeverity("");
+      loadIncidentList();
+      setSelectedIncidentId(id);
+      const detail = await api.incidentGet(id);
+      setIncidentDetail(detail);
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const openIncidentDetail = async (id: string) => {
+    setSelectedIncidentId(id);
+    setIncidentError(null);
+    try {
+      const detail = await api.incidentGet(id);
+      setIncidentDetail(detail);
+    } catch (e) {
+      setIncidentError(String(e));
+      setIncidentDetail(null);
+    }
+  };
+
+  const handleAddItemToIncident = async () => {
+    if (!selectedIncidentId || !addItemRefId.trim()) return;
+    setIncidentLoading(true);
+    setIncidentError(null);
+    try {
+      await api.incidentAddItem(selectedIncidentId, {
+        type: addItemType,
+        ref_id: addItemRefId.trim(),
+      });
+      setAddItemRefId("");
+      const detail = await api.incidentGet(selectedIncidentId);
+      setIncidentDetail(detail);
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const handleAddNoteToIncident = async () => {
+    if (!selectedIncidentId || !addNoteContent.trim()) return;
+    setIncidentLoading(true);
+    setIncidentError(null);
+    try {
+      await api.incidentAddNote(selectedIncidentId, addNoteContent.trim());
+      setAddNoteContent("");
+      const detail = await api.incidentGet(selectedIncidentId);
+      setIncidentDetail(detail);
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const handleCreateIncidentFromScan = async () => {
+    if (!scanResult?.id) return;
+    setCreatingIncidentFromScan(true);
+    setIncidentError(null);
+    try {
+      const incident = await api.incidentFromScan({ scan_id: scanResult.id });
+      await loadIncidentList();
+      setSelectedIncidentId(incident.id);
+      setIncidentDetail(incident);
+      // Switch to incidents tab
+      setTab("incidents");
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setCreatingIncidentFromScan(false);
+    }
+  };
+
+  const handleCreateIncidentFromAnalysis = async (analysisId: string) => {
+    setCreatingIncidentFromAnalysis(true);
+    setIncidentError(null);
+    try {
+      const incident = await api.incidentFromAnalysis({
+        analysis_id: analysisId,
+      });
+      await loadIncidentList();
+      setSelectedIncidentId(incident.id);
+      setIncidentDetail(incident);
+      // Switch to incidents tab
+      setTab("incidents");
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setCreatingIncidentFromAnalysis(false);
+    }
+  };
+
+  const handleAddToExistingIncident = async (
+    incidentId: string,
+    itemType: "scan" | "analysis",
+    refId: string,
+  ) => {
+    setIncidentLoading(true);
+    setIncidentError(null);
+    try {
+      await api.incidentAddItem(incidentId, { type: itemType, ref_id: refId });
+      setShowAddToIncident(false);
+      setAddToIncidentSearch("");
+      if (selectedIncidentId === incidentId) {
+        const detail = await api.incidentGet(incidentId);
+        setIncidentDetail(detail);
+      }
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const handleUpdateIncident = async (
+    incidentId: string,
+    updates: {
+      title?: string;
+      description?: string;
+      status?: "open" | "mitigating" | "resolved";
+      severity?: "info" | "low" | "medium" | "high" | "critical";
+      tags?: string[];
+    },
+  ) => {
+    setIncidentLoading(true);
+    setIncidentError(null);
+    try {
+      const updated = await api.incidentUpdate(incidentId, updates);
+      setIncidentDetail(updated);
+      await loadIncidentList();
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const handleExportIncident = async (format: "markdown" | "json") => {
+    if (!selectedIncidentId) return;
+    setExportLoading(true);
+    setIncidentError(null);
+    try {
+      const content = await api.incidentExport(selectedIncidentId, format);
+      const blob = new Blob([content], {
+        type: format === "json" ? "application/json" : "text/markdown",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `incident-${selectedIncidentId.slice(0, 8)}.${format === "json" ? "json" : "md"}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleScheduleCreate = async () => {
+    if (scheduleCreateScope === "namespace" && !scheduleCreateNamespace.trim())
+      return;
+    if (!scheduleCreateCron.trim()) return;
+    setScheduleLoading(true);
+    setScheduleError(null);
+    try {
+      await api.scheduleCreate({
+        context: scheduleCreateContext.trim() || undefined,
+        scope: scheduleCreateScope,
+        namespace:
+          scheduleCreateScope === "namespace"
+            ? scheduleCreateNamespace.trim()
+            : undefined,
+        cron: scheduleCreateCron.trim(),
+        enabled: scheduleCreateEnabled,
+      });
+      setScheduleCreateContext("");
+      setScheduleCreateNamespace("");
+      setScheduleCreateCron("0 * * * *");
+      setScheduleCreateEnabled(true);
+      await loadScheduleList();
+    } catch (e) {
+      setScheduleError(String(e));
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
+  const startEditSchedule = (s: ScheduleListItem) => {
+    setEditingScheduleId(s.id);
+    setEditScheduleCron(s.cron);
+    setEditScheduleEnabled(s.enabled);
+  };
+
+  const handleScheduleUpdate = async () => {
+    if (!editingScheduleId) return;
+    setScheduleLoading(true);
+    setScheduleError(null);
+    try {
+      await api.scheduleUpdate(editingScheduleId, {
+        cron: editScheduleCron.trim(),
+        enabled: editScheduleEnabled,
+      });
+      setEditingScheduleId(null);
+      await loadScheduleList();
+    } catch (e) {
+      setScheduleError(String(e));
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
+  const handleScheduleDelete = async (id: string) => {
+    if (!confirm("Delete this schedule?")) return;
+    setScheduleLoading(true);
+    setScheduleError(null);
+    try {
+      await api.scheduleDelete(id);
+      if (editingScheduleId === id) setEditingScheduleId(null);
+      await loadScheduleList();
+    } catch (e) {
+      setScheduleError(String(e));
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
+  const filteredFindings = (scanResult?.findings ?? []).filter((f) => {
+    if (scanFilterSeverity && f.severity !== scanFilterSeverity) return false;
+    if (scanFilterCategory && f.category !== scanFilterCategory) return false;
+    return true;
+  });
+  const sortedFindings = [...filteredFindings].sort(
+    (a, b) =>
+      (SEVERITY_ORDER[b.severity] ?? 0) - (SEVERITY_ORDER[a.severity] ?? 0),
+  );
+  const severities = Array.from(
+    new Set(scanResult?.findings.map((f) => f.severity) ?? []),
+  ).sort((a, b) => (SEVERITY_ORDER[b] ?? 0) - (SEVERITY_ORDER[a] ?? 0));
+  const categories = Array.from(
+    new Set(scanResult?.findings.map((f) => f.category) ?? []),
+  ).sort();
+
+  const navItems: { id: Tab; label: string }[] = [
+    { id: "analyze", label: "Analyze" },
+    { id: "scan", label: "Scan" },
+    { id: "incidents", label: "Incidents" },
+    { id: "schedules", label: "Schedules" },
+  ];
+
+  return (
+    <div className="app-layout">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <span className="sidebar-logo">KubeBeaver</span>
+          <span className="sidebar-tagline">
+            Kubernetes troubleshooting assistant
+          </span>
+        </div>
+        <nav className="sidebar-nav">
+          {navItems.map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              className={`sidebar-item ${tab === id ? "active" : ""}`}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+      </aside>
+      <main className="main-content">
+        {tab === "incidents" && (
+          <>
+            <div className="card">
+              <h2 style={{ marginTop: 0 }}>Incidents</h2>
+              <p style={{ color: "#666", marginBottom: 12 }}>
+                Group analyses and scans into incidents; add notes and export
+                timeline.
+              </p>
+              {incidentError && (
+                <div className="error-box" role="alert">
+                  {incidentError}
+                </div>
+              )}
+              <div className="form-row">
+                <label>Title</label>
+                <input
+                  type="text"
+                  value={incidentCreateTitle}
+                  onChange={(e) => setIncidentCreateTitle(e.target.value)}
+                  placeholder="Incident title"
+                  style={{ maxWidth: 400 }}
+                />
+              </div>
+              <div className="form-row">
+                <label>Description</label>
+                <textarea
+                  value={incidentCreateDesc}
+                  onChange={(e) => setIncidentCreateDesc(e.target.value)}
+                  placeholder="Optional description"
+                  rows={2}
+                  style={{ maxWidth: 400 }}
+                />
+              </div>
+              <div className="form-row">
+                <label>Severity</label>
+                <select
+                  value={incidentCreateSeverity}
+                  onChange={(e) => setIncidentCreateSeverity(e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+              <div className="form-row">
+                <button
+                  onClick={handleCreateIncident}
+                  disabled={incidentLoading || !incidentCreateTitle.trim()}
+                >
+                  {incidentLoading ? "Creating…" : "Create incident"}
+                </button>
+              </div>
+            </div>
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Incident list</h3>
+              <ul style={{ listStyle: "none", padding: 0 }}>
+                {incidentList.map((inc) => (
+                  <li
+                    key={inc.id}
+                    style={{
+                      marginBottom: 8,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="link-button"
+                      style={{
+                        textAlign: "left",
+                        border:
+                          selectedIncidentId === inc.id
+                            ? "2px solid #1976d2"
+                            : "1px solid #eee",
+                        padding: 8,
+                        borderRadius: 4,
+                        flex: 1,
+                      }}
+                      onClick={() => openIncidentDetail(inc.id)}
+                    >
+                      {inc.title}
+                      {inc.severity && (
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            fontSize: 11,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {inc.severity}
+                        </span>
+                      )}{" "}
+                      – {new Date(inc.created_at).toLocaleString()}
+                    </button>
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (confirm(`Delete incident "${inc.title}"?`)) {
+                          try {
+                            await api.incidentDelete(inc.id);
+                            // Remove from local state immediately
+                            setIncidentList((prev) =>
+                              prev.filter((item) => item.id !== inc.id),
+                            );
+                            // Clear detail if this incident was selected
+                            if (selectedIncidentId === inc.id) {
+                              setSelectedIncidentId(null);
+                              setIncidentDetail(null);
+                            }
+                          } catch (e) {
+                            setIncidentError(`Failed to delete: ${e}`);
+                          }
+                        }
+                      }}
+                      style={{
+                        color: "#c62828",
+                        fontSize: 12,
+                        padding: "4px 8px",
+                      }}
+                      title="Delete this incident"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {incidentList.length === 0 && (
+                <div
+                  style={{ padding: 24, textAlign: "center", color: "#666" }}
+                >
+                  <p style={{ fontSize: 14, marginBottom: 8 }}>
+                    No incidents yet.
+                  </p>
+                  <p style={{ fontSize: 12 }}>
+                    Create an incident from a scan or analysis, or create one
+                    manually above.
+                  </p>
+                </div>
+              )}
+            </div>
+            {incidentDetail && (
+              <div className="card">
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    setSelectedIncidentId(null);
+                    setIncidentDetail(null);
+                  }}
+                  style={{ marginBottom: 12, fontSize: 13 }}
+                >
+                  ← Back to incidents
+                </button>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    marginBottom: 12,
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <h3 style={{ margin: 0 }}>{incidentDetail.title}</h3>
+                      <select
+                        value={incidentDetail.status}
+                        onChange={(e) =>
+                          handleUpdateIncident(incidentDetail.id, {
+                            status: e.target.value as
+                              | "open"
+                              | "mitigating"
+                              | "resolved",
+                          })
+                        }
+                        disabled={incidentLoading}
+                        style={{
+                          fontSize: 12,
+                          padding: "4px 8px",
+                          borderRadius: 4,
+                          border: "1px solid #ddd",
+                          background:
+                            incidentDetail.status === "open"
+                              ? "#fff3cd"
+                              : incidentDetail.status === "mitigating"
+                                ? "#d1ecf1"
+                                : "#d4edda",
+                          color:
+                            incidentDetail.status === "open"
+                              ? "#856404"
+                              : incidentDetail.status === "mitigating"
+                                ? "#0c5460"
+                                : "#155724",
+                          fontWeight: "bold",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        <option value="open">Open</option>
+                        <option value="mitigating">Mitigating</option>
+                        <option value="resolved">Resolved</option>
+                      </select>
+                      {incidentDetail.severity && (
+                        <select
+                          value={incidentDetail.severity}
+                          onChange={(e) =>
+                            handleUpdateIncident(incidentDetail.id, {
+                              severity: e.target.value as
+                                | "info"
+                                | "low"
+                                | "medium"
+                                | "high"
+                                | "critical",
+                            })
+                          }
+                          disabled={incidentLoading}
+                          style={{
+                            fontSize: 12,
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            border: "1px solid #ddd",
+                            background:
+                              incidentDetail.severity === "critical"
+                                ? "#f8d7da"
+                                : incidentDetail.severity === "high"
+                                  ? "#f5c6cb"
+                                  : incidentDetail.severity === "medium"
+                                    ? "#ffeaa7"
+                                    : incidentDetail.severity === "low"
+                                      ? "#d1f2eb"
+                                      : "#e7f3ff",
+                            color:
+                              incidentDetail.severity === "critical"
+                                ? "#721c24"
+                                : incidentDetail.severity === "high"
+                                  ? "#856404"
+                                  : incidentDetail.severity === "medium"
+                                    ? "#856404"
+                                    : incidentDetail.severity === "low"
+                                      ? "#0c5460"
+                                      : "#004085",
+                            fontWeight: "bold",
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          <option value="info">Info</option>
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                          <option value="critical">Critical</option>
+                        </select>
+                      )}
+                    </div>
+                    {incidentDetail.description && (
+                      <p style={{ color: "#555", marginBottom: 12 }}>
+                        {incidentDetail.description}
+                      </p>
+                    )}
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 16,
+                        marginBottom: 12,
+                        fontSize: 12,
+                        color: "#666",
+                      }}
+                    >
+                      <span>
+                        Created{" "}
+                        {new Date(incidentDetail.created_at).toLocaleString()}
+                      </span>
+                      {incidentDetail.updated_at &&
+                        incidentDetail.updated_at !==
+                          incidentDetail.created_at && (
+                          <span>
+                            Updated{" "}
+                            {new Date(
+                              incidentDetail.updated_at,
+                            ).toLocaleString()}
+                          </span>
+                        )}
+                      <span>• {incidentDetail.items_count} items</span>
+                      <span>• {incidentDetail.notes_count} notes</span>
+                    </div>
+                    <div style={{ marginBottom: 12 }}>
+                      <label
+                        style={{
+                          fontSize: 12,
+                          display: "block",
+                          marginBottom: 4,
+                        }}
+                      >
+                        Tags (comma-separated):
+                      </label>
+                      <input
+                        type="text"
+                        value={incidentDetail.tags.join(", ")}
+                        onChange={(e) => {
+                          const tags = e.target.value
+                            .split(",")
+                            .map((t) => t.trim())
+                            .filter((t) => t);
+                          handleUpdateIncident(incidentDetail.id, { tags });
+                        }}
+                        disabled={incidentLoading}
+                        placeholder="tag1, tag2, tag3"
+                        style={{
+                          width: "100%",
+                          padding: "6px 8px",
+                          fontSize: 13,
+                        }}
+                      />
+                      {incidentDetail.tags.length > 0 && (
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 4,
+                            flexWrap: "wrap",
+                            marginTop: 4,
+                          }}
+                        >
+                          {incidentDetail.tags.map((tag, i) => (
+                            <span
+                              key={i}
+                              style={{
+                                fontSize: 11,
+                                padding: "2px 6px",
+                                background: "#e3f2fd",
+                                color: "#1976d2",
+                                borderRadius: 3,
+                              }}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <h4 style={{ marginTop: 16, marginBottom: 8 }}>Timeline</h4>
+                {incidentDetail.timeline &&
+                incidentDetail.timeline.length > 0 ? (
+                  <ul style={{ listStyle: "none", padding: 0 }}>
+                    {incidentDetail.timeline.map((entry, idx) => (
+                      <li
+                        key={idx}
+                        style={{
+                          marginBottom: 12,
+                          paddingLeft: 16,
+                          borderLeft: "2px solid #ddd",
+                          position: "relative",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "#666",
+                            marginBottom: 4,
+                          }}
+                        >
+                          {new Date(entry.created_at || "").toLocaleString()}
+                        </div>
+                        {entry.type === "incident_created" && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 11,
+                                padding: "2px 6px",
+                                background: "#e3f2fd",
+                                color: "#1976d2",
+                                borderRadius: 3,
+                              }}
+                            >
+                              CREATED
+                            </span>
+                            <span>Incident created</span>
+                          </div>
+                        )}
+                        {entry.type === "item" && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 11,
+                                padding: "2px 6px",
+                                background:
+                                  entry.item_type === "analysis"
+                                    ? "#fff3cd"
+                                    : "#d1ecf1",
+                                color:
+                                  entry.item_type === "analysis"
+                                    ? "#856404"
+                                    : "#0c5460",
+                                borderRadius: 3,
+                                textTransform: "uppercase",
+                              }}
+                            >
+                              {entry.item_type}
+                            </span>
+                            <code style={{ fontSize: 12 }}>{entry.ref_id}</code>
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={async () => {
+                                if (entry.item_type === "analysis") {
+                                  setViewHistoryId(entry.ref_id);
+                                  const detail = await api.historyGet(
+                                    entry.ref_id,
+                                  );
+                                  setHistoryDetail(detail);
+                                } else {
+                                  const detail = await api.scanGet(
+                                    entry.ref_id,
+                                  );
+                                  setScanResult(detail);
+                                  setTab("scan");
+                                }
+                              }}
+                              style={{ fontSize: 12 }}
+                            >
+                              Open {entry.item_type}
+                            </button>
+                          </div>
+                        )}
+                        {entry.type === "note" && (
+                          <div>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                padding: "2px 6px",
+                                background: "#f5f5f5",
+                                color: "#666",
+                                borderRadius: 3,
+                              }}
+                            >
+                              NOTE
+                            </span>
+                            <div
+                              style={{
+                                marginTop: 4,
+                                padding: 8,
+                                background: "#f9f9f9",
+                                borderRadius: 4,
+                                fontSize: 13,
+                              }}
+                            >
+                              {entry.content}
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={{ color: "#666", fontSize: 13 }}>
+                    No timeline entries yet.
+                  </p>
+                )}
+                <h4 style={{ marginTop: 16 }}>Add from history</h4>
+                <div className="form-row" style={{ flexWrap: "wrap", gap: 8 }}>
+                  <select
+                    value={addItemType}
+                    onChange={(e) =>
+                      setAddItemType(e.target.value as "analysis" | "scan")
+                    }
+                  >
+                    <option value="analysis">Analysis</option>
+                    <option value="scan">Scan</option>
+                  </select>
+                  <select
+                    value={addItemRefId}
+                    onChange={(e) => setAddItemRefId(e.target.value)}
+                    style={{ minWidth: 200 }}
+                  >
+                    <option value="">Select…</option>
+                    {addItemType === "analysis" &&
+                      history.map((h) => (
+                        <option key={h.id} value={h.id}>
+                          {h.kind} {h.name} – {h.created_at}
+                        </option>
+                      ))}
+                    {addItemType === "scan" &&
+                      scanList.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.scope} {s.namespace || ""} – {s.created_at}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    onClick={handleAddItemToIncident}
+                    disabled={incidentLoading || !addItemRefId.trim()}
+                  >
+                    Add
+                  </button>
+                </div>
+                <h4 style={{ marginTop: 24, marginBottom: 8 }}>Add note</h4>
+                <div
+                  style={{
+                    padding: 12,
+                    border: "1px solid #ddd",
+                    borderRadius: 4,
+                    background: "#f9f9f9",
+                  }}
+                >
+                  <textarea
+                    value={addNoteContent}
+                    onChange={(e) => setAddNoteContent(e.target.value)}
+                    placeholder="Enter note content..."
+                    rows={3}
+                    style={{
+                      width: "100%",
+                      padding: "8px",
+                      fontSize: 13,
+                      border: "1px solid #ccc",
+                      borderRadius: 4,
+                      fontFamily: "inherit",
+                    }}
+                  />
+                  <div
+                    style={{
+                      marginTop: 8,
+                      display: "flex",
+                      justifyContent: "flex-end",
+                    }}
+                  >
+                    <button
+                      onClick={handleAddNoteToIncident}
+                      disabled={incidentLoading || !addNoteContent.trim()}
+                      style={{ fontSize: 13, padding: "6px 12px" }}
+                    >
+                      {incidentLoading ? "Adding…" : "Add note"}
+                    </button>
+                  </div>
+                </div>
+                <h4 style={{ marginTop: 16 }}>Export</h4>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => handleExportIncident("markdown")}
+                    disabled={exportLoading}
+                  >
+                    {exportLoading ? "Exporting…" : "Export Markdown"}
+                  </button>
+                  <button
+                    onClick={() => handleExportIncident("json")}
+                    disabled={exportLoading}
+                  >
+                    Export JSON
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "schedules" && (
+          <>
+            <div className="card">
+              <h2 style={{ marginTop: 0 }}>Scheduled scans</h2>
+              <p style={{ color: "var(--muted)", marginTop: 0 }}>
+                Run cluster or namespace scans on a cron schedule. Results are
+                stored like manual scans. Optional: set WEBHOOK_URL or
+                SLACK_WEBHOOK_URL for critical/high findings.
+              </p>
+              {scheduleError && (
+                <div className="error-box" role="alert">
+                  {scheduleError}
+                </div>
+              )}
+              <h3 style={{ marginTop: 16 }}>Create schedule</h3>
+              <div className="form-row">
+                {contexts.length > 0 && (
+                  <>
+                    <label>Context</label>
+                    <select
+                      value={scheduleCreateContext}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setScheduleCreateContext(v);
+                        if (v) handleContextChange(v);
+                      }}
+                    >
+                      <option value="">(default)</option>
+                      {contexts.map((c) => (
+                        <option key={c.name} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                <label>Scope</label>
+                <select
+                  value={scheduleCreateScope}
+                  onChange={(e) =>
+                    setScheduleCreateScope(
+                      e.target.value as "namespace" | "cluster",
+                    )
+                  }
+                >
+                  <option value="namespace">Namespace</option>
+                  <option value="cluster">Cluster</option>
+                </select>
+                {scheduleCreateScope === "namespace" && (
+                  <>
+                    <label>Namespace</label>
+                    <select
+                      value={scheduleCreateNamespace}
+                      onChange={(e) =>
+                        setScheduleCreateNamespace(e.target.value)
+                      }
+                    >
+                      <option value="">Select…</option>
+                      {namespaces.map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                <label>Cron (5 parts)</label>
+                <input
+                  type="text"
+                  value={scheduleCreateCron}
+                  onChange={(e) => setScheduleCreateCron(e.target.value)}
+                  placeholder="0 * * * *"
+                  style={{ fontFamily: "monospace" }}
+                />
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={scheduleCreateEnabled}
+                    onChange={(e) => setScheduleCreateEnabled(e.target.checked)}
+                  />{" "}
+                  Enabled
+                </label>
+                <span />
+                <button
+                  onClick={handleScheduleCreate}
+                  disabled={scheduleLoading}
+                >
+                  {scheduleLoading ? "Creating…" : "Create schedule"}
+                </button>
+              </div>
+              <h3 style={{ marginTop: 24 }}>Schedules</h3>
+              {scheduleList.length === 0 ? (
+                <p style={{ color: "var(--muted)" }}>
+                  No schedules yet. Create one above.
+                </p>
+              ) : (
+                <ul style={{ listStyle: "none", padding: 0 }}>
+                  {scheduleList.map((s) => (
+                    <li
+                      key={s.id}
+                      style={{
+                        padding: "10px 12px",
+                        marginBottom: 8,
+                        background: "var(--bg-secondary)",
+                        borderRadius: 8,
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        gap: 12,
+                      }}
+                    >
+                      {editingScheduleId === s.id ? (
+                        <>
+                          <input
+                            type="text"
+                            value={editScheduleCron}
+                            onChange={(e) =>
+                              setEditScheduleCron(e.target.value)
+                            }
+                            placeholder="0 * * * *"
+                            style={{ fontFamily: "monospace", width: 120 }}
+                          />
+                          <label
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={editScheduleEnabled}
+                              onChange={(e) =>
+                                setEditScheduleEnabled(e.target.checked)
+                              }
+                            />
+                            Enabled
+                          </label>
+                          <button
+                            onClick={handleScheduleUpdate}
+                            disabled={scheduleLoading}
+                          >
+                            Save
+                          </button>
+                          <button onClick={() => setEditingScheduleId(null)}>
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <code
+                            style={{
+                              background: "var(--bg)",
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                            }}
+                          >
+                            {s.cron}
+                          </code>
+                          <span>
+                            {s.scope === "cluster"
+                              ? "cluster"
+                              : s.namespace || "—"}
+                          </span>
+                          {s.context && (
+                            <span title="context">{s.context}</span>
+                          )}
+                          <span
+                            style={{
+                              color: s.enabled
+                                ? "var(--success)"
+                                : "var(--muted)",
+                            }}
+                          >
+                            {s.enabled ? "On" : "Off"}
+                          </span>
+                          <button onClick={() => startEditSchedule(s)}>
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleScheduleDelete(s.id)}
+                            disabled={scheduleLoading}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </>
+        )}
+
+        {tab === "scan" && (
+          <>
+            <div className="card">
+              <h2 style={{ marginTop: 0 }}>Cluster health scan</h2>
+              {scanError && (
+                <div className="error-box" role="alert">
+                  {scanError}
+                </div>
+              )}
+              <div className="form-row">
+                {showContextSelect && (
+                  <>
+                    <label>Context</label>
+                    <select
+                      value={selectedContext}
+                      onChange={(e) => handleContextChange(e.target.value)}
+                    >
+                      {contexts.map((c) => (
+                        <option key={c.name} value={c.name}>
+                          {c.name}
+                          {c.current ? " (current)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+              </div>
+              <div className="form-row">
+                <label>Scope</label>
+                <select
+                  value={scanScope}
+                  onChange={(e) =>
+                    setScanScope(e.target.value as "namespace" | "cluster")
+                  }
+                >
+                  <option value="namespace">Namespace</option>
+                  <option value="cluster">Cluster</option>
+                </select>
+              </div>
+              {scanScope === "namespace" && (
+                <div className="form-row">
+                  <label>Namespace</label>
+                  <select
+                    key={`scan-namespace-${selectedContext}-${namespaceKeyRef.current}`}
+                    value={scanNamespace}
+                    onChange={(e) => setScanNamespace(e.target.value)}
+                  >
+                    <option value="">Select...</option>
+                    {namespaces.map((ns) => (
+                      <option key={ns} value={ns}>
+                        {ns}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className="form-row">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={scanIncludeLogs}
+                    onChange={(e) => setScanIncludeLogs(e.target.checked)}
+                  />
+                  Include logs in evidence
+                </label>
+              </div>
+              <div className="form-row">
+                <button
+                  onClick={handleScan}
+                  disabled={
+                    scanLoading ||
+                    (scanScope === "namespace" && !scanNamespace.trim())
+                  }
+                >
+                  {scanLoading ? "Scanning…" : "Scan"}
+                </button>
+              </div>
+            </div>
+
+            {scanResult && (
+              <div className="card">
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 12,
+                  }}
+                >
+                  <h2 style={{ margin: 0 }}>
+                    {llmProviderLabel ? `${llmProviderLabel} – ` : ""}
+                    Scan results
+                    {scanResult.duration_ms != null &&
+                      scanResult.duration_ms >= 0 && (
+                        <>
+                          {" – "}
+                          {scanResult.duration_ms >= 1000
+                            ? `${(scanResult.duration_ms / 1000).toFixed(1)}s`
+                            : `${scanResult.duration_ms}ms`}
+                        </>
+                      )}
+                  </h2>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={handleCreateIncidentFromScan}
+                      disabled={creatingIncidentFromScan || !scanResult.id}
+                      style={{ fontSize: 13, padding: "6px 12px" }}
+                    >
+                      {creatingIncidentFromScan
+                        ? "Creating…"
+                        : "Create incident"}
+                    </button>
+                    <button
+                      onClick={() => setShowAddToIncident(!showAddToIncident)}
+                      disabled={incidentLoading}
+                      style={{ fontSize: 13, padding: "6px 12px" }}
+                    >
+                      Add to incident
+                    </button>
+                  </div>
+                </div>
+                {showAddToIncident && scanResult.id && (
+                  <div
+                    style={{
+                      marginBottom: 12,
+                      padding: 12,
+                      border: "1px solid #ddd",
+                      borderRadius: 4,
+                    }}
+                  >
+                    <div style={{ marginBottom: 8 }}>
+                      <input
+                        type="text"
+                        placeholder="Search incidents..."
+                        value={addToIncidentSearch}
+                        onChange={(e) => setAddToIncidentSearch(e.target.value)}
+                        style={{
+                          width: "100%",
+                          padding: "6px 8px",
+                          fontSize: 13,
+                        }}
+                      />
+                    </div>
+                    <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                      {incidentList
+                        .filter(
+                          (inc) =>
+                            addToIncidentSearch.trim() === "" ||
+                            inc.title
+                              .toLowerCase()
+                              .includes(addToIncidentSearch.toLowerCase()),
+                        )
+                        .map((inc) => (
+                          <button
+                            key={inc.id}
+                            type="button"
+                            onClick={() =>
+                              handleAddToExistingIncident(
+                                inc.id,
+                                "scan",
+                                scanResult.id!,
+                              )
+                            }
+                            disabled={incidentLoading}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              textAlign: "left",
+                              padding: "6px 8px",
+                              marginBottom: 4,
+                              fontSize: 13,
+                              border: "1px solid #ddd",
+                              borderRadius: 4,
+                              background: "white",
+                              cursor: incidentLoading
+                                ? "not-allowed"
+                                : "pointer",
+                            }}
+                          >
+                            {inc.title} ({inc.status})
+                          </button>
+                        ))}
+                      {incidentList.filter(
+                        (inc) =>
+                          addToIncidentSearch.trim() === "" ||
+                          inc.title
+                            .toLowerCase()
+                            .includes(addToIncidentSearch.toLowerCase()),
+                      ).length === 0 && (
+                        <div
+                          style={{ padding: 8, color: "#666", fontSize: 13 }}
+                        >
+                          No incidents found
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {scanResult.error && (
+                  <div className="error-box" style={{ marginBottom: 12 }}>
+                    {scanResult.error}
+                  </div>
+                )}
+                {scanResult.summary_markdown && (
+                  <div className="markdown-body" style={{ marginBottom: 16 }}>
+                    {(() => {
+                      const summary = scanResult.summary_markdown!;
+                      const headingMatch = summary.match(
+                        /^##\s*Scan summary\s*(\((.*?)\))?/m,
+                      );
+                      const heading = headingMatch
+                        ? `Scan summary${headingMatch[1] ?? ""}`
+                        : "Scan summary";
+                      const counts = scanResult.counts ?? {};
+                      const severities = [
+                        { key: "critical", label: "Critical" },
+                        { key: "high", label: "High" },
+                        { key: "medium", label: "Medium" },
+                        { key: "low", label: "Low" },
+                        { key: "info", label: "Info" },
+                      ] as const;
+                      const total = scanResult.findings?.length ?? 0;
+                      return (
+                        <>
+                          <h2 style={{ fontSize: "1.1em", marginBottom: 4 }}>
+                            {heading}
+                          </h2>
+                          <div className="scan-summary-counts">
+                            {severities.map((s, i) => (
+                              <span key={s.key}>
+                                {i > 0 && (
+                                  <span className="severity-sep">|</span>
+                                )}
+                                <span className={`severity-${s.key}`}>
+                                  {s.label}: {counts[s.key] ?? 0}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                          <div className="scan-summary-total">
+                            • Total findings: {total}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 16,
+                    marginBottom: 12,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <label>
+                    Severity{" "}
+                    <select
+                      value={scanFilterSeverity}
+                      onChange={(e) => setScanFilterSeverity(e.target.value)}
+                    >
+                      <option value="">All</option>
+                      {severities.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Category{" "}
+                    <select
+                      value={scanFilterCategory}
+                      onChange={(e) => setScanFilterCategory(e.target.value)}
+                    >
+                      <option value="">All</option>
+                      {categories.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div
+                  style={{ display: "flex", gap: 24, alignItems: "flex-start" }}
+                >
+                  <ul
+                    style={{
+                      listStyle: "none",
+                      padding: 0,
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
+                    {sortedFindings.map((f) => (
+                      <li key={f.id} style={{ marginBottom: 8 }}>
+                        <button
+                          type="button"
+                          className="link-button"
+                          style={{
+                            textAlign: "left",
+                            padding: 8,
+                            border:
+                              selectedFinding?.id === f.id
+                                ? "2px solid #1976d2"
+                                : "1px solid #eee",
+                            borderRadius: 4,
+                            width: "100%",
+                          }}
+                          onClick={() => setSelectedFinding(f)}
+                        >
+                          {(f.occurred_at ?? scanResult.created_at) && (
+                            <span
+                              style={{
+                                marginRight: 8,
+                                fontSize: 11,
+                                color: "#666",
+                                flexShrink: 0,
+                              }}
+                            >
+                              {new Date(
+                                f.occurred_at ?? scanResult.created_at!,
+                              ).toLocaleString(undefined, {
+                                month: "2-digit",
+                                day: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          )}
+                          <span
+                            style={{
+                              marginRight: 8,
+                              fontWeight: 600,
+                              textTransform: "uppercase",
+                              fontSize: 11,
+                            }}
+                          >
+                            {f.severity}
+                          </span>
+                          [{f.category}] {f.title}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {selectedFinding && (
+                    <div
+                      className="card"
+                      style={{
+                        flex: "1 1 400px",
+                        maxWidth: 500,
+                        margin: 0,
+                        position: "sticky",
+                        top: 16,
+                      }}
+                    >
+                      <h3 style={{ marginTop: 0 }}>
+                        [{selectedFinding.severity}] {selectedFinding.title}
+                      </h3>
+                      <p style={{ color: "#666", fontSize: 14 }}>
+                        {selectedFinding.description}
+                      </p>
+                      {selectedFinding.affected_refs?.length > 0 && (
+                        <p style={{ fontSize: 13 }}>
+                          <strong>Affected:</strong>{" "}
+                          {selectedFinding.affected_refs
+                            .map(
+                              (r) =>
+                                `${r.kind || "?"}/${r.namespace ? r.namespace + "/" : ""}${r.name || "?"}`,
+                            )
+                            .join(", ")}
+                        </p>
+                      )}
+                      {selectedFinding.evidence_snippet && (
+                        <div style={{ marginTop: 12 }}>
+                          <strong>Evidence</strong>
+                          <pre
+                            className="evidence-block"
+                            style={{
+                              marginTop: 4,
+                              padding: 12,
+                              maxHeight: 300,
+                              fontSize: 12,
+                            }}
+                          >
+                            {/^\s*[{\[]/.test(
+                              selectedFinding.evidence_snippet,
+                            ) ? (
+                              <JsonHighlight
+                                text={prettyJson(
+                                  selectedFinding.evidence_snippet,
+                                )}
+                              />
+                            ) : (
+                              selectedFinding.evidence_snippet
+                            )}
+                          </pre>
+                        </div>
+                      )}
+                      {selectedFinding.suggested_commands?.length > 0 && (
+                        <div style={{ marginTop: 12 }}>
+                          <strong>Suggested commands</strong>
+                          <ul style={{ margin: 4, paddingLeft: 20 }}>
+                            {selectedFinding.suggested_commands.map(
+                              (cmd, i) => (
+                                <li key={i}>
+                                  <code style={{ fontSize: 12 }}>{cmd}</code>
+                                </li>
+                              ),
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="card">
+              <h2>Recent scans</h2>
+              <ul style={{ listStyle: "none", padding: 0 }}>
+                {scanList.slice(0, 15).map((s) => (
+                  <li key={s.id} style={{ marginBottom: 8 }}>
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={async () => {
+                        try {
+                          const detail = await api.scanGet(s.id);
+                          const findings = detail.findings ?? [];
+                          const counts: Record<string, number> = {};
+                          findings.forEach((f) => {
+                            counts[f.severity] = (counts[f.severity] ?? 0) + 1;
+                          });
+                          setScanResult({
+                            id: detail.id,
+                            created_at: detail.created_at ?? undefined,
+                            summary_markdown: detail.summary_markdown ?? null,
+                            error: detail.error ?? null,
+                            findings,
+                            counts,
+                          });
+                          setSelectedFinding(null);
+                        } catch {
+                          setScanResult(null);
+                        }
+                      }}
+                    >
+                      {s.scope} {s.namespace ? `· ${s.namespace}` : ""} –{" "}
+                      {s.findings_count} findings –{" "}
+                      {new Date(s.created_at).toLocaleString()}
+                    </button>
+                    {s.error && (
+                      <span style={{ color: "#c62828", marginLeft: 8 }}>
+                        Partial
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {scanList.length === 0 && (
+                <p style={{ color: "#666" }}>No scans yet.</p>
+              )}
+            </div>
+          </>
+        )}
+
+        {tab === "analyze" && (
+          <>
+            <div className="card">
+              <h2 style={{ marginTop: 0 }}>Analyze</h2>
+              {error && (
+                <div className="error-box" role="alert">
+                  {error}
+                </div>
+              )}
+              <div className="form-row">
+                {showContextSelect && (
+                  <>
+                    <label>Context</label>
+                    <select
+                      value={selectedContext}
+                      onChange={(e) => handleContextChange(e.target.value)}
+                    >
+                      {contexts.map((c) => (
+                        <option key={c.name} value={c.name}>
+                          {c.name}
+                          {c.current ? " (current)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+              </div>
+              <div className="form-row">
+                <label>Namespace</label>
+                <select
+                  key={`namespace-${selectedContext}-${namespaceKeyRef.current}`}
+                  value={selectedNamespace}
+                  onChange={(e) => setSelectedNamespace(e.target.value)}
+                  disabled={kind === "Node"}
+                >
+                  <option value="">--</option>
+                  {namespaces.map((ns) => (
+                    <option key={ns} value={ns}>
+                      {ns}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-row">
+                <label>Target</label>
+                <select
+                  value={kind}
+                  onChange={(e) => setKind(e.target.value as Kind)}
+                >
+                  <option value="Pod">Pod</option>
+                  <option value="Deployment">Deployment</option>
+                  <option value="StatefulSet">StatefulSet</option>
+                  <option value="Node">Node</option>
+                </select>
+              </div>
+              <div className="form-row">
+                <label>Resource</label>
+                <select
+                  value={selectedName}
+                  onChange={(e) => setSelectedName(e.target.value)}
+                  disabled={resourceNames.length === 0}
+                >
+                  <option value="">Select...</option>
+                  {resourceNames.map((r) => (
+                    <option key={r.name} value={r.name}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-row">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={includePreviousLogs}
+                    onChange={(e) => setIncludePreviousLogs(e.target.checked)}
+                  />
+                  Include previous logs (e.g. crash)
+                </label>
+              </div>
+              <div className="form-row">
+                <button
+                  onClick={handleAnalyze}
+                  disabled={loading || !selectedName.trim()}
+                >
+                  {loading ? "Analyzing…" : "Analyze"}
+                </button>
+              </div>
+            </div>
+
+            {result && (
+              <div className="card">
+                <h2>
+                  {llmProviderLabel ? `${llmProviderLabel} – ` : ""}
+                  Result
+                  {result.tokens_used > 0 &&
+                    ` – ${result.tokens_used.toLocaleString()} tokens`}
+                  {result.response_time_ms > 0 &&
+                    (result.response_time_ms >= 1000
+                      ? ` – ${(result.response_time_ms / 1000).toFixed(1)}s`
+                      : ` – ${result.response_time_ms}ms`)}
+                </h2>
+                {result.error && (
+                  <div className="error-box">{result.error}</div>
+                )}
+                {result.analysis_markdown && (
+                  <div className="markdown-body">
+                    <ReactMarkdown>{result.analysis_markdown}</ReactMarkdown>
+                  </div>
+                )}
+                {result.truncation_report?.truncated && (
+                  <p style={{ fontSize: 12, color: "#666" }}>
+                    Evidence was truncated (
+                    {result.truncation_report.total_chars_after} /{" "}
+                    {result.truncation_report.total_chars_before} chars).
+                  </p>
+                )}
+                <div style={{ marginTop: 16 }}>
+                  <button
+                    type="button"
+                    className="toggle-header"
+                    onClick={() => setEvidenceOpen(!evidenceOpen)}
+                  >
+                    {evidenceOpen ? "▼" : "▶"} Raw evidence (sanitized)
+                  </button>
+                  {evidenceOpen && (
+                    <div className="evidence-block">
+                      <JsonHighlight
+                        text={JSON.stringify(result.evidence, null, 2)}
+                      />
+                    </div>
+                  )}
+                </div>
+                {(result.analysis_json?.heuristics?.length ||
+                  result.analysis_json?.why?.length ||
+                  result.analysis_json?.uncertain?.length ||
+                  (result.analysis_json?.follow_up_questions?.length ?? 0) >
+                    0) && (
+                  <div style={{ marginTop: 12 }}>
+                    <button
+                      type="button"
+                      className="toggle-header"
+                      onClick={() => setExplainOpen(!explainOpen)}
+                    >
+                      {explainOpen ? "▼" : "▶"} Explain reasoning
+                    </button>
+                    {explainOpen && (
+                      <div className="evidence-block" style={{ padding: 12 }}>
+                        {result.analysis_json.heuristics?.length ? (
+                          <section style={{ marginBottom: 16 }}>
+                            <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
+                              Heuristic signals
+                            </h4>
+                            <ul style={{ margin: 0, paddingLeft: 20 }}>
+                              {result.analysis_json.heuristics.map((h, i) => (
+                                <li key={i}>
+                                  <strong>{h.condition}</strong>{" "}
+                                  {h.evidence_refs?.length
+                                    ? `(${h.evidence_refs.join(", ")})`
+                                    : ""}
+                                  <ul
+                                    style={{
+                                      margin: "4px 0 0",
+                                      paddingLeft: 16,
+                                    }}
+                                  >
+                                    {h.candidates?.map((c, j) => (
+                                      <li key={j}>
+                                        {c.cause} ({c.confidence})
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
+                        ) : null}
+                        {result.analysis_json.why?.length ? (
+                          <section style={{ marginBottom: 16 }}>
+                            <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
+                              Evidence mapping
+                            </h4>
+                            <ul style={{ margin: 0, paddingLeft: 20 }}>
+                              {result.analysis_json.why.map((w, i) => (
+                                <li key={i}>
+                                  <code style={{ fontSize: 12 }}>{w.ref}</code>:{" "}
+                                  {w.explanation}
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
+                        ) : null}
+                        {(result.analysis_json.uncertain?.length ||
+                          (result.analysis_json.follow_up_questions?.length ??
+                            0) > 0) && (
+                          <section>
+                            <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
+                              Uncertain / follow-up questions
+                            </h4>
+                            <ul style={{ margin: 0, paddingLeft: 20 }}>
+                              {(result.analysis_json.uncertain ?? []).map(
+                                (u, i) => (
+                                  <li key={`u-${i}`}>{u}</li>
+                                ),
+                              )}
+                              {(
+                                result.analysis_json.follow_up_questions ?? []
+                              ).map((q, i) => (
+                                <li key={`q-${i}`}>{q}</li>
+                              ))}
+                            </ul>
+                          </section>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {compareResult && (
+              <div className="card">
+                <h2>Compare analyses</h2>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    setCompareResult(null);
+                    setCompareError(null);
+                  }}
+                >
+                  ← Back
+                </button>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 16,
+                    marginTop: 12,
+                  }}
+                >
+                  <div>
+                    <h3 style={{ marginTop: 0 }}>Analysis A</h3>
+                    <p style={{ margin: 0, fontSize: 14 }}>
+                      {compareResult.analysis_a.kind}{" "}
+                      {compareResult.analysis_a.name}{" "}
+                      {compareResult.analysis_a.namespace &&
+                        `(${compareResult.analysis_a.namespace})`}
+                    </p>
+                    <p
+                      style={{ margin: "4px 0 0", color: "#666", fontSize: 12 }}
+                    >
+                      {new Date(
+                        compareResult.analysis_a.created_at,
+                      ).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <h3 style={{ marginTop: 0 }}>Analysis B</h3>
+                    <p style={{ margin: 0, fontSize: 14 }}>
+                      {compareResult.analysis_b.kind}{" "}
+                      {compareResult.analysis_b.name}{" "}
+                      {compareResult.analysis_b.namespace &&
+                        `(${compareResult.analysis_b.namespace})`}
+                    </p>
+                    <p
+                      style={{ margin: "4px 0 0", color: "#666", fontSize: 12 }}
+                    >
+                      {new Date(
+                        compareResult.analysis_b.created_at,
+                      ).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+                {compareResult.likely_reasoning && (
+                  <div style={{ marginTop: 16 }}>
+                    <h3 style={{ marginTop: 0 }}>Likely reasoning</h3>
+                    <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+                      {compareResult.likely_reasoning}
+                    </p>
+                  </div>
+                )}
+                {compareResult.diff_summary && (
+                  <div style={{ marginTop: 16 }}>
+                    <h3 style={{ marginTop: 0 }}>Diff summary</h3>
+                    <div className="markdown-body">
+                      <ReactMarkdown>
+                        {compareResult.diff_summary}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+                <div style={{ marginTop: 16 }}>
+                  <h3 style={{ marginTop: 0 }}>Copy kubectl commands</h3>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 12,
+                    }}
+                  >
+                    <div>
+                      <p style={{ margin: "0 0 8px", fontSize: 13 }}>
+                        From A (
+                        {compareResult.analysis_a.created_at.slice(0, 10)})
+                      </p>
+                      {(compareResult.analysis_a.kubectl_commands ?? [])
+                        .length > 0 ? (
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() =>
+                            copyKubectlCommands(
+                              compareResult.analysis_a.kubectl_commands ?? [],
+                            )
+                          }
+                        >
+                          Copy{" "}
+                          {compareResult.analysis_a.kubectl_commands?.length}{" "}
+                          commands
+                        </button>
+                      ) : (
+                        <span style={{ color: "#666", fontSize: 13 }}>
+                          No commands
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <p style={{ margin: "0 0 8px", fontSize: 13 }}>
+                        From B (
+                        {compareResult.analysis_b.created_at.slice(0, 10)})
+                      </p>
+                      {(compareResult.analysis_b.kubectl_commands ?? [])
+                        .length > 0 ? (
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() =>
+                            copyKubectlCommands(
+                              compareResult.analysis_b.kubectl_commands ?? [],
+                            )
+                          }
+                        >
+                          Copy{" "}
+                          {compareResult.analysis_b.kubectl_commands?.length}{" "}
+                          commands
+                        </button>
+                      ) : (
+                        <span style={{ color: "#666", fontSize: 13 }}>
+                          No commands
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {viewHistoryId && !compareResult && (
+              <div className="card">
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 12,
+                  }}
+                >
+                  <h2 style={{ margin: 0 }}>
+                    History – {viewHistoryId.slice(0, 8)}
+                  </h2>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={() =>
+                        historyDetail &&
+                        handleCreateIncidentFromAnalysis(historyDetail.id)
+                      }
+                      disabled={creatingIncidentFromAnalysis || !historyDetail}
+                      style={{ fontSize: 13, padding: "6px 12px" }}
+                    >
+                      {creatingIncidentFromAnalysis
+                        ? "Creating…"
+                        : "Create incident"}
+                    </button>
+                    <button
+                      onClick={() => setShowAddToIncident(!showAddToIncident)}
+                      disabled={incidentLoading || !historyDetail}
+                      style={{ fontSize: 13, padding: "6px 12px" }}
+                    >
+                      Add to incident
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    setViewHistoryId(null);
+                    setHistoryDetail(null);
+                    setShowAddToIncident(false);
+                  }}
+                  style={{ marginBottom: 12 }}
+                >
+                  ← Back
+                </button>
+                {showAddToIncident && historyDetail && (
+                  <div
+                    style={{
+                      marginBottom: 12,
+                      padding: 12,
+                      border: "1px solid #ddd",
+                      borderRadius: 4,
+                    }}
+                  >
+                    <div style={{ marginBottom: 8 }}>
+                      <input
+                        type="text"
+                        placeholder="Search incidents..."
+                        value={addToIncidentSearch}
+                        onChange={(e) => setAddToIncidentSearch(e.target.value)}
+                        style={{
+                          width: "100%",
+                          padding: "6px 8px",
+                          fontSize: 13,
+                        }}
+                      />
+                    </div>
+                    <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                      {incidentList
+                        .filter(
+                          (inc) =>
+                            addToIncidentSearch.trim() === "" ||
+                            inc.title
+                              .toLowerCase()
+                              .includes(addToIncidentSearch.toLowerCase()),
+                        )
+                        .map((inc) => (
+                          <button
+                            key={inc.id}
+                            type="button"
+                            onClick={() =>
+                              handleAddToExistingIncident(
+                                inc.id,
+                                "analysis",
+                                historyDetail.id,
+                              )
+                            }
+                            disabled={incidentLoading}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              textAlign: "left",
+                              padding: "6px 8px",
+                              marginBottom: 4,
+                              fontSize: 13,
+                              border: "1px solid #ddd",
+                              borderRadius: 4,
+                              background: "white",
+                              cursor: incidentLoading
+                                ? "not-allowed"
+                                : "pointer",
+                            }}
+                          >
+                            {inc.title} ({inc.status})
+                          </button>
+                        ))}
+                      {incidentList.filter(
+                        (inc) =>
+                          addToIncidentSearch.trim() === "" ||
+                          inc.title
+                            .toLowerCase()
+                            .includes(addToIncidentSearch.toLowerCase()),
+                      ).length === 0 && (
+                        <div
+                          style={{ padding: 8, color: "#666", fontSize: 13 }}
+                        >
+                          No incidents found
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {historyDetail && (
+                  <>
+                    <p>
+                      <strong>{historyDetail.kind}</strong> {historyDetail.name}{" "}
+                      {historyDetail.namespace &&
+                        `(${historyDetail.namespace})`}
+                    </p>
+                    {historyDetail.analysis_markdown && (
+                      <div className="markdown-body">
+                        <ReactMarkdown>
+                          {historyDetail.analysis_markdown}
+                        </ReactMarkdown>
+                      </div>
+                    )}
+                    {historyDetail.analysis_json &&
+                      (historyDetail.analysis_json.heuristics?.length ||
+                        historyDetail.analysis_json.why?.length ||
+                        historyDetail.analysis_json.uncertain?.length ||
+                        (historyDetail.analysis_json.follow_up_questions
+                          ?.length ?? 0) > 0) && (
+                        <div style={{ marginTop: 12 }}>
+                          <button
+                            type="button"
+                            className="toggle-header"
+                            onClick={() => setExplainOpen(!explainOpen)}
+                          >
+                            {explainOpen ? "▼" : "▶"} Explain reasoning
+                          </button>
+                          {explainOpen && (
+                            <div
+                              className="evidence-block"
+                              style={{ padding: 12 }}
+                            >
+                              {historyDetail.analysis_json.heuristics
+                                ?.length ? (
+                                <section style={{ marginBottom: 16 }}>
+                                  <h4
+                                    style={{ margin: "0 0 8px", fontSize: 14 }}
+                                  >
+                                    Heuristic signals
+                                  </h4>
+                                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                    {historyDetail.analysis_json.heuristics.map(
+                                      (h, i) => (
+                                        <li key={i}>
+                                          <strong>{h.condition}</strong>{" "}
+                                          {h.evidence_refs?.length
+                                            ? `(${h.evidence_refs.join(", ")})`
+                                            : ""}
+                                          <ul
+                                            style={{
+                                              margin: "4px 0 0",
+                                              paddingLeft: 16,
+                                            }}
+                                          >
+                                            {h.candidates?.map((c, j) => (
+                                              <li key={j}>
+                                                {c.cause} ({c.confidence})
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </li>
+                                      ),
+                                    )}
+                                  </ul>
+                                </section>
+                              ) : null}
+                              {historyDetail.analysis_json.why?.length ? (
+                                <section style={{ marginBottom: 16 }}>
+                                  <h4
+                                    style={{ margin: "0 0 8px", fontSize: 14 }}
+                                  >
+                                    Evidence mapping
+                                  </h4>
+                                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                    {historyDetail.analysis_json.why.map(
+                                      (w, i) => (
+                                        <li key={i}>
+                                          <code style={{ fontSize: 12 }}>
+                                            {w.ref}
+                                          </code>
+                                          : {w.explanation}
+                                        </li>
+                                      ),
+                                    )}
+                                  </ul>
+                                </section>
+                              ) : null}
+                              {(historyDetail.analysis_json.uncertain?.length ||
+                                (historyDetail.analysis_json.follow_up_questions
+                                  ?.length ?? 0) > 0) && (
+                                <section>
+                                  <h4
+                                    style={{ margin: "0 0 8px", fontSize: 14 }}
+                                  >
+                                    Uncertain / follow-up questions
+                                  </h4>
+                                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                    {(
+                                      historyDetail.analysis_json.uncertain ??
+                                      []
+                                    ).map((u, i) => (
+                                      <li key={`u-${i}`}>{u}</li>
+                                    ))}
+                                    {(
+                                      historyDetail.analysis_json
+                                        .follow_up_questions ?? []
+                                    ).map((q, i) => (
+                                      <li key={`q-${i}`}>{q}</li>
+                                    ))}
+                                  </ul>
+                                </section>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    {historyDetail.error && (
+                      <div className="error-box">{historyDetail.error}</div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            <div className="card">
+              <h2>History</h2>
+              {compareError && (
+                <div
+                  className="error-box"
+                  role="alert"
+                  style={{ marginBottom: 12 }}
+                >
+                  {compareError}
+                </div>
+              )}
+              <p style={{ fontSize: 13, color: "#666", marginBottom: 8 }}>
+                Select two analyses and click Compare.
+              </p>
+              <ul style={{ listStyle: "none", padding: 0 }}>
+                {history.slice(0, 15).map((h) => (
+                  <li
+                    key={h.id}
+                    style={{
+                      marginBottom: 8,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={compareSelectedIds.includes(h.id)}
+                      onChange={() => toggleCompareSelection(h.id)}
+                      aria-label={`Select ${h.kind} ${h.name} for compare`}
+                    />
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={() => openHistoryDetail(h.id)}
+                      style={{ flex: 1, textAlign: "left" }}
+                    >
+                      {h.kind} {h.name} {h.namespace && `(${h.namespace})`} –{" "}
+                      {new Date(h.created_at).toLocaleString()}
+                    </button>
+                    {h.error && <span style={{ color: "#c62828" }}>Error</span>}
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={async () => {
+                        if (
+                          confirm(`Delete analysis for ${h.kind} ${h.name}?`)
+                        ) {
+                          try {
+                            await api.historyDelete(h.id);
+                            // Remove from local state immediately
+                            setHistory((prev) =>
+                              prev.filter((item) => item.id !== h.id),
+                            );
+                            // Also remove from compare selection if selected
+                            setCompareSelectedIds((prev) =>
+                              prev.filter((id) => id !== h.id),
+                            );
+                          } catch (e) {
+                            setError(`Failed to delete: ${e}`);
+                          }
+                        }
+                      }}
+                      style={{
+                        color: "#c62828",
+                        fontSize: 12,
+                        padding: "4px 8px",
+                      }}
+                      title="Delete this analysis"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {compareSelectedIds.length === 2 && (
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={compareLoading}
+                  onClick={runCompare}
+                  style={{ marginTop: 8 }}
+                >
+                  {compareLoading ? "Comparing…" : "Compare selected"}
+                </button>
+              )}
+              {history.length === 0 && (
+                <p style={{ color: "#666" }}>No analyses yet.</p>
+              )}
+            </div>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+export default App;

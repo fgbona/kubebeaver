@@ -1,5 +1,55 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import ReactMarkdown from "react-markdown";
+import { Layout } from "@/components/Layout";
+import { PageHeader } from "@/components/PageHeader";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { SeverityBadge } from "@/components/SeverityBadge";
+import { CategoryBadge } from "@/components/CategoryBadge";
+import { StatPills } from "@/components/StatPills";
+import { EmptyState } from "@/components/EmptyState";
+import { ErrorAlert } from "@/components/ErrorAlert";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Copy } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import {
   api,
   type AnalyzeResponse,
@@ -14,7 +64,13 @@ import {
 } from "./api";
 
 type Kind = "Pod" | "Deployment" | "StatefulSet" | "Node";
-type Tab = "analyze" | "scan" | "incidents" | "schedules";
+type Tab =
+  | "analyze"
+  | "scan"
+  | "history"
+  | "compare"
+  | "incidents"
+  | "schedules";
 
 const SEVERITY_ORDER: Record<string, number> = {
   critical: 4,
@@ -196,6 +252,12 @@ function App() {
   const [addItemRefId, setAddItemRefId] = useState("");
   const [addNoteContent, setAddNoteContent] = useState("");
   const [exportLoading, setExportLoading] = useState(false);
+  const [showAddToIncident, setShowAddToIncident] = useState(false);
+  const [addToIncidentSearch, setAddToIncidentSearch] = useState("");
+  const [creatingIncidentFromScan, setCreatingIncidentFromScan] =
+    useState(false);
+  const [creatingIncidentFromAnalysis, setCreatingIncidentFromAnalysis] =
+    useState(false);
 
   // Schedules
   const [scheduleList, setScheduleList] = useState<ScheduleListItem[]>([]);
@@ -211,6 +273,8 @@ function App() {
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(
     null,
   );
+  const [scheduleCreateDialogOpen, setScheduleCreateDialogOpen] =
+    useState(false);
   const [editScheduleCron, setEditScheduleCron] = useState("");
   const [editScheduleEnabled, setEditScheduleEnabled] = useState(true);
 
@@ -719,6 +783,88 @@ function App() {
     }
   };
 
+  const handleCreateIncidentFromScan = async () => {
+    if (!scanResult?.id) return;
+    setCreatingIncidentFromScan(true);
+    setIncidentError(null);
+    try {
+      const incident = await api.incidentFromScan({ scan_id: scanResult.id });
+      await loadIncidentList();
+      setSelectedIncidentId(incident.id);
+      setIncidentDetail(incident);
+      // Switch to incidents tab
+      setTab("incidents");
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setCreatingIncidentFromScan(false);
+    }
+  };
+
+  const handleCreateIncidentFromAnalysis = async (analysisId: string) => {
+    setCreatingIncidentFromAnalysis(true);
+    setIncidentError(null);
+    try {
+      const incident = await api.incidentFromAnalysis({
+        analysis_id: analysisId,
+      });
+      await loadIncidentList();
+      setSelectedIncidentId(incident.id);
+      setIncidentDetail(incident);
+      // Switch to incidents tab
+      setTab("incidents");
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setCreatingIncidentFromAnalysis(false);
+    }
+  };
+
+  const handleAddToExistingIncident = async (
+    incidentId: string,
+    itemType: "scan" | "analysis",
+    refId: string,
+  ) => {
+    setIncidentLoading(true);
+    setIncidentError(null);
+    try {
+      await api.incidentAddItem(incidentId, { type: itemType, ref_id: refId });
+      setShowAddToIncident(false);
+      setAddToIncidentSearch("");
+      if (selectedIncidentId === incidentId) {
+        const detail = await api.incidentGet(incidentId);
+        setIncidentDetail(detail);
+      }
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const handleUpdateIncident = async (
+    incidentId: string,
+    updates: {
+      title?: string;
+      description?: string;
+      status?: "open" | "mitigating" | "resolved";
+      severity?: "info" | "low" | "medium" | "high" | "critical";
+      tags?: string[];
+    },
+  ) => {
+    setIncidentLoading(true);
+    setIncidentError(null);
+    try {
+      const updated = await api.incidentUpdate(incidentId, updates);
+      setIncidentDetail(updated);
+      await loadIncidentList();
+    } catch (e) {
+      setIncidentError(String(e));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
   const handleExportIncident = async (format: "markdown" | "json") => {
     if (!selectedIncidentId) return;
     setExportLoading(true);
@@ -825,768 +971,1258 @@ function App() {
     new Set(scanResult?.findings.map((f) => f.category) ?? []),
   ).sort();
 
-  const navItems: { id: Tab; label: string }[] = [
-    { id: "analyze", label: "Analyze" },
-    { id: "scan", label: "Scan" },
-    { id: "incidents", label: "Incidents" },
-    { id: "schedules", label: "Schedules" },
-  ];
-
   return (
-    <div className="app-layout">
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <span className="sidebar-logo">KubeBeaver</span>
-          <span className="sidebar-tagline">
-            Kubernetes troubleshooting assistant
-          </span>
-        </div>
-        <nav className="sidebar-nav">
-          {navItems.map(({ id, label }) => (
-            <button
-              key={id}
-              type="button"
-              className={`sidebar-item ${tab === id ? "active" : ""}`}
-              onClick={() => setTab(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
-      </aside>
-      <main className="main-content">
+    <Layout currentTab={tab} onTabChange={setTab}>
+      <div className="space-y-6">
         {tab === "incidents" && (
           <>
-            <div className="card">
-              <h2 style={{ marginTop: 0 }}>Incidents</h2>
-              <p style={{ color: "#666", marginBottom: 12 }}>
-                Group analyses and scans into incidents; add notes and export
-                timeline.
-              </p>
-              {incidentError && (
-                <div className="error-box" role="alert">
-                  {incidentError}
+            <PageHeader
+              title="Incidents"
+              subtitle="Group analyses and scans into incidents; add notes and export timeline"
+            />
+            {incidentError && (
+              <ErrorAlert
+                message={incidentError}
+                onDismiss={() => setIncidentError(null)}
+              />
+            )}
+            <Card>
+              <CardHeader>
+                <CardTitle>Create New Incident</CardTitle>
+                <CardDescription>
+                  Create a new incident to track and manage related analyses and
+                  scans
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="incident-title">Title</Label>
+                  <Input
+                    id="incident-title"
+                    type="text"
+                    value={incidentCreateTitle}
+                    onChange={(e) => setIncidentCreateTitle(e.target.value)}
+                    placeholder="Incident title"
+                  />
                 </div>
-              )}
-              <div className="form-row">
-                <label>Title</label>
-                <input
-                  type="text"
-                  value={incidentCreateTitle}
-                  onChange={(e) => setIncidentCreateTitle(e.target.value)}
-                  placeholder="Incident title"
-                  style={{ maxWidth: 400 }}
-                />
-              </div>
-              <div className="form-row">
-                <label>Description</label>
-                <textarea
-                  value={incidentCreateDesc}
-                  onChange={(e) => setIncidentCreateDesc(e.target.value)}
-                  placeholder="Optional description"
-                  rows={2}
-                  style={{ maxWidth: 400 }}
-                />
-              </div>
-              <div className="form-row">
-                <label>Severity</label>
-                <select
-                  value={incidentCreateSeverity}
-                  onChange={(e) => setIncidentCreateSeverity(e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="critical">Critical</option>
-                </select>
-              </div>
-              <div className="form-row">
-                <button
+                <div className="space-y-2">
+                  <Label htmlFor="incident-description">Description</Label>
+                  <Textarea
+                    id="incident-description"
+                    value={incidentCreateDesc}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                      setIncidentCreateDesc(e.target.value)
+                    }
+                    placeholder="Optional description"
+                    rows={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="incident-severity">Severity</Label>
+                  <Select
+                    value={incidentCreateSeverity}
+                    onValueChange={setIncidentCreateSeverity}
+                  >
+                    <SelectTrigger id="incident-severity">
+                      <SelectValue placeholder="Select severity (optional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">—</SelectItem>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                      <SelectItem value="critical">Critical</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
                   onClick={handleCreateIncident}
                   disabled={incidentLoading || !incidentCreateTitle.trim()}
+                  className="w-full md:w-auto"
                 >
                   {incidentLoading ? "Creating…" : "Create incident"}
-                </button>
-              </div>
-            </div>
-            <div className="card">
-              <h3 style={{ marginTop: 0 }}>Incident list</h3>
-              <ul style={{ listStyle: "none", padding: 0 }}>
-                {incidentList.map((inc) => (
-                  <li
-                    key={inc.id}
-                    style={{
-                      marginBottom: 8,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <button
-                      type="button"
-                      className="link-button"
-                      style={{
-                        textAlign: "left",
-                        border:
+                </Button>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>Incident List</CardTitle>
+                <CardDescription>
+                  {incidentList.length > 0
+                    ? `${incidentList.length} incident${incidentList.length !== 1 ? "s" : ""}`
+                    : "No incidents yet"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {incidentList.length > 0 ? (
+                  <div className="space-y-2">
+                    {incidentList.map((inc) => (
+                      <div
+                        key={inc.id}
+                        className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                           selectedIncidentId === inc.id
-                            ? "2px solid #1976d2"
-                            : "1px solid #eee",
-                        padding: 8,
-                        borderRadius: 4,
-                        flex: 1,
-                      }}
-                      onClick={() => openIncidentDetail(inc.id)}
-                    >
-                      {inc.title}
-                      {inc.severity && (
-                        <span
-                          style={{
-                            marginLeft: 8,
-                            fontSize: 11,
-                            textTransform: "uppercase",
-                          }}
-                        >
-                          {inc.severity}
-                        </span>
-                      )}{" "}
-                      – {new Date(inc.created_at).toLocaleString()}
-                    </button>
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        if (confirm(`Delete incident "${inc.title}"?`)) {
-                          try {
-                            await api.incidentDelete(inc.id);
-                            // Remove from local state immediately
-                            setIncidentList((prev) =>
-                              prev.filter((item) => item.id !== inc.id),
-                            );
-                            // Clear detail if this incident was selected
-                            if (selectedIncidentId === inc.id) {
-                              setSelectedIncidentId(null);
-                              setIncidentDetail(null);
+                            ? "border-primary bg-primary/5"
+                            : "hover:bg-muted/50"
+                        }`}
+                        onClick={() => openIncidentDetail(inc.id)}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <h4 className="font-semibold truncate">
+                              {inc.title}
+                            </h4>
+                            {inc.severity && (
+                              <SeverityBadge severity={inc.severity as any} />
+                            )}
+                            <Badge
+                              variant={
+                                inc.status === "open"
+                                  ? "default"
+                                  : inc.status === "mitigating"
+                                    ? "secondary"
+                                    : "outline"
+                              }
+                            >
+                              {inc.status}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            {new Date(inc.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (confirm(`Delete incident "${inc.title}"?`)) {
+                              try {
+                                await api.incidentDelete(inc.id);
+                                setIncidentList((prev) =>
+                                  prev.filter((item) => item.id !== inc.id),
+                                );
+                                if (selectedIncidentId === inc.id) {
+                                  setSelectedIncidentId(null);
+                                  setIncidentDetail(null);
+                                }
+                              } catch (e) {
+                                setIncidentError(`Failed to delete: ${e}`);
+                              }
                             }
-                          } catch (e) {
-                            setIncidentError(`Failed to delete: ${e}`);
-                          }
-                        }
-                      }}
-                      style={{
-                        color: "#c62828",
-                        fontSize: 12,
-                        padding: "4px 8px",
-                      }}
-                      title="Delete this incident"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {incidentList.length === 0 && (
-                <p style={{ color: "#666" }}>No incidents yet.</p>
-              )}
-            </div>
-            {incidentDetail && (
-              <div className="card">
-                <h3 style={{ marginTop: 0 }}>
-                  {incidentDetail.title}
-                  {incidentDetail.severity && (
-                    <span style={{ marginLeft: 8, fontSize: 14 }}>
-                      [{incidentDetail.severity}]
-                    </span>
-                  )}
-                </h3>
-                {incidentDetail.description && (
-                  <p style={{ color: "#555", marginBottom: 12 }}>
-                    {incidentDetail.description}
-                  </p>
-                )}
-                <p style={{ fontSize: 12, color: "#666" }}>
-                  Created {new Date(incidentDetail.created_at).toLocaleString()}{" "}
-                  • Status: {incidentDetail.status}
-                </p>
-                <h4 style={{ marginTop: 16 }}>Timeline</h4>
-                <ul style={{ listStyle: "none", padding: 0 }}>
-                  {(incidentDetail.timeline || []).map((entry, idx) => (
-                    <li
-                      key={idx}
-                      style={{
-                        marginBottom: 8,
-                        paddingLeft: 12,
-                        borderLeft: "2px solid #ddd",
-                      }}
-                    >
-                      {entry.type === "incident_created" && (
-                        <>Incident created at {entry.created_at}</>
-                      )}
-                      {entry.type === "item" && (
-                        <>
-                          {entry.item_type} <code>{entry.ref_id}</code> at{" "}
-                          {entry.created_at}
-                        </>
-                      )}
-                      {entry.type === "note" && (
-                        <>
-                          Note at {entry.created_at}: {entry.content}
-                        </>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-                <h4 style={{ marginTop: 16 }}>Add from history</h4>
-                <div className="form-row" style={{ flexWrap: "wrap", gap: 8 }}>
-                  <select
-                    value={addItemType}
-                    onChange={(e) =>
-                      setAddItemType(e.target.value as "analysis" | "scan")
-                    }
-                  >
-                    <option value="analysis">Analysis</option>
-                    <option value="scan">Scan</option>
-                  </select>
-                  <select
-                    value={addItemRefId}
-                    onChange={(e) => setAddItemRefId(e.target.value)}
-                    style={{ minWidth: 200 }}
-                  >
-                    <option value="">Select…</option>
-                    {addItemType === "analysis" &&
-                      history.map((h) => (
-                        <option key={h.id} value={h.id}>
-                          {h.kind} {h.name} – {h.created_at}
-                        </option>
-                      ))}
-                    {addItemType === "scan" &&
-                      scanList.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.scope} {s.namespace || ""} – {s.created_at}
-                        </option>
-                      ))}
-                  </select>
-                  <button
-                    onClick={handleAddItemToIncident}
-                    disabled={incidentLoading || !addItemRefId.trim()}
-                  >
-                    Add
-                  </button>
-                </div>
-                <h4 style={{ marginTop: 16 }}>Add note</h4>
-                <div className="form-row" style={{ flexWrap: "wrap", gap: 8 }}>
-                  <input
-                    type="text"
-                    value={addNoteContent}
-                    onChange={(e) => setAddNoteContent(e.target.value)}
-                    placeholder="Note content"
-                    style={{ flex: 1, minWidth: 200 }}
+                          }}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No incidents yet"
+                    description="Create an incident from a scan or analysis, or create one manually above"
                   />
-                  <button
-                    onClick={handleAddNoteToIncident}
-                    disabled={incidentLoading || !addNoteContent.trim()}
-                  >
-                    Add note
-                  </button>
-                </div>
-                <h4 style={{ marginTop: 16 }}>Export</h4>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    onClick={() => handleExportIncident("markdown")}
-                    disabled={exportLoading}
-                  >
-                    {exportLoading ? "Exporting…" : "Export Markdown"}
-                  </button>
-                  <button
-                    onClick={() => handleExportIncident("json")}
-                    disabled={exportLoading}
-                  >
-                    Export JSON
-                  </button>
-                </div>
-              </div>
+                )}
+              </CardContent>
+            </Card>
+            {incidentDetail && (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <CardTitle>{incidentDetail.title}</CardTitle>
+                        <Select
+                          value={incidentDetail.status}
+                          onValueChange={(v) =>
+                            handleUpdateIncident(incidentDetail.id, {
+                              status: v as "open" | "mitigating" | "resolved",
+                            })
+                          }
+                          disabled={incidentLoading}
+                        >
+                          <SelectTrigger className="w-[140px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="open">Open</SelectItem>
+                            <SelectItem value="mitigating">
+                              Mitigating
+                            </SelectItem>
+                            <SelectItem value="resolved">Resolved</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {incidentDetail.severity && (
+                          <SeverityBadge
+                            severity={incidentDetail.severity as any}
+                          />
+                        )}
+                      </div>
+                      {incidentDetail.description && (
+                        <CardDescription className="mt-1">
+                          {incidentDetail.description}
+                        </CardDescription>
+                      )}
+                      <div className="flex flex-wrap gap-4 mt-3 text-sm text-muted-foreground">
+                        <span>
+                          Created{" "}
+                          {new Date(incidentDetail.created_at).toLocaleString()}
+                        </span>
+                        {incidentDetail.updated_at &&
+                          incidentDetail.updated_at !==
+                            incidentDetail.created_at && (
+                            <span>
+                              Updated{" "}
+                              {new Date(
+                                incidentDetail.updated_at,
+                              ).toLocaleString()}
+                            </span>
+                          )}
+                        <span>• {incidentDetail.items_count} items</span>
+                        <span>• {incidentDetail.notes_count} notes</span>
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedIncidentId(null);
+                        setIncidentDetail(null);
+                      }}
+                    >
+                      ← Back
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="space-y-2">
+                    <Label htmlFor="incident-tags">
+                      Tags (comma-separated)
+                    </Label>
+                    <Input
+                      id="incident-tags"
+                      type="text"
+                      value={incidentDetail.tags.join(", ")}
+                      onChange={(e) => {
+                        const tags = e.target.value
+                          .split(",")
+                          .map((t) => t.trim())
+                          .filter((t) => t);
+                        handleUpdateIncident(incidentDetail.id, { tags });
+                      }}
+                      disabled={incidentLoading}
+                      placeholder="tag1, tag2, tag3"
+                    />
+                    {incidentDetail.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {incidentDetail.tags.map((tag, i) => (
+                          <Badge key={i} variant="secondary">
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div>
+                      <h3 className="text-lg font-semibold mb-4">Timeline</h3>
+                      {incidentDetail.timeline &&
+                      incidentDetail.timeline.length > 0 ? (
+                        <div className="space-y-4">
+                          {incidentDetail.timeline.map((entry, idx) => (
+                            <div
+                              key={idx}
+                              className="relative pl-6 border-l-2 border-muted"
+                            >
+                              <div className="absolute -left-2 top-0 w-4 h-4 rounded-full bg-background border-2 border-muted" />
+                              <div className="text-xs text-muted-foreground mb-2">
+                                {new Date(
+                                  entry.created_at || "",
+                                ).toLocaleString()}
+                              </div>
+                              {entry.type === "incident_created" && (
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline">CREATED</Badge>
+                                  <span className="text-sm">
+                                    Incident created
+                                  </span>
+                                </div>
+                              )}
+                              {entry.type === "item" && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <Badge
+                                    variant={
+                                      entry.item_type === "analysis"
+                                        ? "secondary"
+                                        : "outline"
+                                    }
+                                  >
+                                    {entry.item_type?.toUpperCase() ||
+                                      "UNKNOWN"}
+                                  </Badge>
+                                  <code className="text-xs bg-muted px-1 rounded">
+                                    {entry.ref_id}
+                                  </code>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={async () => {
+                                      if (!entry.ref_id) return;
+                                      if (entry.item_type === "analysis") {
+                                        setTab("history");
+                                        setViewHistoryId(entry.ref_id);
+                                        const detail = await api.historyGet(
+                                          entry.ref_id,
+                                        );
+                                        setHistoryDetail(detail);
+                                      } else if (entry.item_type === "scan") {
+                                        const detail = await api.scanGet(
+                                          entry.ref_id,
+                                        );
+                                        const findings = detail.findings ?? [];
+                                        const counts: Record<string, number> =
+                                          {};
+                                        findings.forEach((f) => {
+                                          counts[f.severity] =
+                                            (counts[f.severity] ?? 0) + 1;
+                                        });
+                                        setScanResult({
+                                          id: detail.id,
+                                          created_at:
+                                            detail.created_at ?? undefined,
+                                          summary_markdown:
+                                            detail.summary_markdown ?? null,
+                                          error: detail.error ?? null,
+                                          findings,
+                                          counts,
+                                        });
+                                        setTab("scan");
+                                      }
+                                    }}
+                                  >
+                                    Open {entry.item_type || "item"}
+                                  </Button>
+                                </div>
+                              )}
+                              {entry.type === "note" && (
+                                <div>
+                                  <Badge variant="outline" className="mb-2">
+                                    NOTE
+                                  </Badge>
+                                  <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                                    {entry.content}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <EmptyState
+                          title="No timeline entries"
+                          description="Add items or notes to see them here"
+                        />
+                      )}
+                    </div>
+
+                    <div className="space-y-6">
+                      <div>
+                        <h3 className="text-lg font-semibold mb-4">Add Item</h3>
+                        <Card>
+                          <CardContent className="space-y-3 pt-6">
+                            <div className="space-y-2">
+                              <Label htmlFor="add-item-type">Type</Label>
+                              <Select
+                                value={addItemType}
+                                onValueChange={(v) =>
+                                  setAddItemType(v as "analysis" | "scan")
+                                }
+                              >
+                                <SelectTrigger id="add-item-type">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="analysis">
+                                    Analysis
+                                  </SelectItem>
+                                  <SelectItem value="scan">Scan</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="add-item-ref">Select Item</Label>
+                              <Select
+                                value={addItemRefId}
+                                onValueChange={setAddItemRefId}
+                              >
+                                <SelectTrigger id="add-item-ref">
+                                  <SelectValue placeholder="Select an item" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="">Select…</SelectItem>
+                                  {addItemType === "analysis" &&
+                                    history.map((h) => (
+                                      <SelectItem key={h.id} value={h.id}>
+                                        {h.kind} {h.name} –{" "}
+                                        {new Date(
+                                          h.created_at,
+                                        ).toLocaleDateString()}
+                                      </SelectItem>
+                                    ))}
+                                  {addItemType === "scan" &&
+                                    scanList.map((s) => (
+                                      <SelectItem key={s.id} value={s.id}>
+                                        {s.scope} {s.namespace || ""} –{" "}
+                                        {new Date(
+                                          s.created_at,
+                                        ).toLocaleDateString()}
+                                      </SelectItem>
+                                    ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <Button
+                              onClick={handleAddItemToIncident}
+                              disabled={incidentLoading || !addItemRefId.trim()}
+                              className="w-full"
+                            >
+                              Add Item
+                            </Button>
+                          </CardContent>
+                        </Card>
+                      </div>
+
+                      <div>
+                        <h3 className="text-lg font-semibold mb-4">Add Note</h3>
+                        <Card>
+                          <CardContent className="space-y-3 pt-6">
+                            <div className="space-y-2">
+                              <Label htmlFor="add-note-content">
+                                Note Content
+                              </Label>
+                              <Textarea
+                                id="add-note-content"
+                                value={addNoteContent}
+                                onChange={(
+                                  e: React.ChangeEvent<HTMLTextAreaElement>,
+                                ) => setAddNoteContent(e.target.value)}
+                                placeholder="Enter note content..."
+                                rows={4}
+                              />
+                            </div>
+                            <Button
+                              onClick={handleAddNoteToIncident}
+                              disabled={
+                                incidentLoading || !addNoteContent.trim()
+                              }
+                              className="w-full"
+                            >
+                              {incidentLoading ? "Adding…" : "Add Note"}
+                            </Button>
+                          </CardContent>
+                        </Card>
+                      </div>
+
+                      <div>
+                        <h3 className="text-lg font-semibold mb-4">Export</h3>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => handleExportIncident("markdown")}
+                            disabled={exportLoading}
+                            className="flex-1"
+                          >
+                            {exportLoading ? "Exporting…" : "Export Markdown"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => handleExportIncident("json")}
+                            disabled={exportLoading}
+                            className="flex-1"
+                          >
+                            Export JSON
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             )}
           </>
         )}
 
         {tab === "schedules" && (
           <>
-            <div className="card">
-              <h2 style={{ marginTop: 0 }}>Scheduled scans</h2>
-              <p style={{ color: "var(--muted)", marginTop: 0 }}>
-                Run cluster or namespace scans on a cron schedule. Results are
-                stored like manual scans. Optional: set WEBHOOK_URL or
-                SLACK_WEBHOOK_URL for critical/high findings.
-              </p>
-              {scheduleError && (
-                <div className="error-box" role="alert">
-                  {scheduleError}
-                </div>
-              )}
-              <h3 style={{ marginTop: 16 }}>Create schedule</h3>
-              <div className="form-row">
-                {contexts.length > 0 && (
-                  <>
-                    <label>Context</label>
-                    <select
-                      value={scheduleCreateContext}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setScheduleCreateContext(v);
-                        if (v) handleContextChange(v);
-                      }}
-                    >
-                      <option value="">(default)</option>
-                      {contexts.map((c) => (
-                        <option key={c.name} value={c.name}>
-                          {c.name}
-                        </option>
+            <PageHeader
+              title="Scheduled Scans"
+              subtitle="Run cluster or namespace scans on a cron schedule. Results are stored like manual scans."
+              actions={
+                <Button onClick={() => setScheduleCreateDialogOpen(true)}>
+                  Create Schedule
+                </Button>
+              }
+            />
+            {scheduleError && (
+              <ErrorAlert
+                message={scheduleError}
+                onDismiss={() => setScheduleError(null)}
+              />
+            )}
+            <Card>
+              <CardHeader>
+                <CardTitle>Schedules</CardTitle>
+                <CardDescription>
+                  {scheduleList.length > 0
+                    ? `${scheduleList.length} schedule${scheduleList.length !== 1 ? "s" : ""} configured`
+                    : "No schedules configured yet"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {scheduleList.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Cron Expression</TableHead>
+                        <TableHead>Scope</TableHead>
+                        <TableHead>Namespace</TableHead>
+                        <TableHead>Context</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {scheduleList.map((s) => (
+                        <TableRow key={s.id}>
+                          <TableCell>
+                            <code className="text-sm bg-muted px-2 py-1 rounded">
+                              {s.cron}
+                            </code>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {s.scope === "cluster" ? "Cluster" : "Namespace"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {s.scope === "namespace" ? (
+                              <Badge variant="secondary">
+                                {s.namespace || "—"}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {s.context ? (
+                              <Badge variant="outline">{s.context}</Badge>
+                            ) : (
+                              <span className="text-muted-foreground">
+                                default
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={s.enabled ? "default" : "secondary"}
+                            >
+                              {s.enabled ? "Enabled" : "Disabled"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => startEditSchedule(s)}
+                              >
+                                Edit
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleScheduleDelete(s.id)}
+                                disabled={scheduleLoading}
+                                className="text-destructive hover:text-destructive"
+                              >
+                                Delete
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
                       ))}
-                    </select>
-                  </>
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <EmptyState
+                    title="No schedules yet"
+                    description="Create a schedule to automatically run scans on a cron schedule"
+                    action={{
+                      label: "Create Schedule",
+                      onClick: () => setScheduleCreateDialogOpen(true),
+                    }}
+                  />
                 )}
-                <label>Scope</label>
-                <select
-                  value={scheduleCreateScope}
-                  onChange={(e) =>
-                    setScheduleCreateScope(
-                      e.target.value as "namespace" | "cluster",
-                    )
-                  }
-                >
-                  <option value="namespace">Namespace</option>
-                  <option value="cluster">Cluster</option>
-                </select>
-                {scheduleCreateScope === "namespace" && (
-                  <>
-                    <label>Namespace</label>
-                    <select
-                      value={scheduleCreateNamespace}
-                      onChange={(e) =>
-                        setScheduleCreateNamespace(e.target.value)
+              </CardContent>
+            </Card>
+
+            <Dialog
+              open={scheduleCreateDialogOpen}
+              onOpenChange={setScheduleCreateDialogOpen}
+            >
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Create Schedule</DialogTitle>
+                  <DialogDescription>
+                    Configure a scheduled scan to run automatically on a cron
+                    schedule
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  {contexts.length > 0 && (
+                    <div className="space-y-2">
+                      <Label htmlFor="schedule-context">Context</Label>
+                      <Select
+                        value={scheduleCreateContext}
+                        onValueChange={(v) => {
+                          setScheduleCreateContext(v);
+                          if (v) handleContextChange(v);
+                        }}
+                      >
+                        <SelectTrigger id="schedule-context">
+                          <SelectValue placeholder="(default)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">(default)</SelectItem>
+                          {contexts.map((c) => (
+                            <SelectItem key={c.name} value={c.name}>
+                              {c.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="schedule-scope">Scope</Label>
+                    <Select
+                      value={scheduleCreateScope}
+                      onValueChange={(v) =>
+                        setScheduleCreateScope(v as "namespace" | "cluster")
                       }
                     >
-                      <option value="">Select…</option>
-                      {namespaces.map((n) => (
-                        <option key={n} value={n}>
-                          {n}
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                )}
-                <label>Cron (5 parts)</label>
-                <input
-                  type="text"
-                  value={scheduleCreateCron}
-                  onChange={(e) => setScheduleCreateCron(e.target.value)}
-                  placeholder="0 * * * *"
-                  style={{ fontFamily: "monospace" }}
-                />
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={scheduleCreateEnabled}
-                    onChange={(e) => setScheduleCreateEnabled(e.target.checked)}
-                  />{" "}
-                  Enabled
-                </label>
-                <span />
-                <button
-                  onClick={handleScheduleCreate}
-                  disabled={scheduleLoading}
-                >
-                  {scheduleLoading ? "Creating…" : "Create schedule"}
-                </button>
-              </div>
-              <h3 style={{ marginTop: 24 }}>Schedules</h3>
-              {scheduleList.length === 0 ? (
-                <p style={{ color: "var(--muted)" }}>
-                  No schedules yet. Create one above.
-                </p>
-              ) : (
-                <ul style={{ listStyle: "none", padding: 0 }}>
-                  {scheduleList.map((s) => (
-                    <li
-                      key={s.id}
-                      style={{
-                        padding: "10px 12px",
-                        marginBottom: 8,
-                        background: "var(--bg-secondary)",
-                        borderRadius: 8,
-                        display: "flex",
-                        flexWrap: "wrap",
-                        alignItems: "center",
-                        gap: 12,
+                      <SelectTrigger id="schedule-scope">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="namespace">Namespace</SelectItem>
+                        <SelectItem value="cluster">Cluster</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {scheduleCreateScope === "namespace" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="schedule-namespace">Namespace</Label>
+                      <Select
+                        value={scheduleCreateNamespace}
+                        onValueChange={setScheduleCreateNamespace}
+                      >
+                        <SelectTrigger id="schedule-namespace">
+                          <SelectValue placeholder="Select namespace" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">Select…</SelectItem>
+                          {namespaces.map((n) => (
+                            <SelectItem key={n} value={n}>
+                              {n}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="schedule-cron">
+                      Cron Expression (5 parts: minute hour day month weekday)
+                    </Label>
+                    <Input
+                      id="schedule-cron"
+                      type="text"
+                      value={scheduleCreateCron}
+                      onChange={(e) => setScheduleCreateCron(e.target.value)}
+                      placeholder="0 * * * *"
+                      className="font-mono"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Format: <code>minute hour day month weekday</code>
+                      <br />
+                      Examples: <code>0 * * * *</code> (every hour),{" "}
+                      <code>0 0 * * *</code> (daily at midnight),{" "}
+                      <code>0 0 * * 0</code> (weekly on Sunday)
+                    </p>
+                    {scheduleCreateCron &&
+                      !/^(\*|[0-5]?\d) (\*|[01]?\d|2[0-3]) (\*|[012]?\d|3[01]) (\*|[01]?\d) (\*|[0-6])$/.test(
+                        scheduleCreateCron.trim(),
+                      ) && (
+                        <p className="text-xs text-destructive">
+                          Invalid cron expression. Use format:{" "}
+                          <code>minute hour day month weekday</code>
+                        </p>
+                      )}
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="schedule-enabled"
+                      checked={scheduleCreateEnabled}
+                      onCheckedChange={(checked: boolean) =>
+                        setScheduleCreateEnabled(checked === true)
+                      }
+                    />
+                    <Label
+                      htmlFor="schedule-enabled"
+                      className="cursor-pointer"
+                    >
+                      Enabled
+                    </Label>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-4">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setScheduleCreateDialogOpen(false);
+                        setScheduleCreateCron("0 * * * *");
+                        setScheduleCreateEnabled(true);
+                        setScheduleCreateScope("namespace");
+                        setScheduleCreateNamespace("");
+                        setScheduleCreateContext("");
                       }}
                     >
-                      {editingScheduleId === s.id ? (
-                        <>
-                          <input
-                            type="text"
-                            value={editScheduleCron}
-                            onChange={(e) =>
-                              setEditScheduleCron(e.target.value)
-                            }
-                            placeholder="0 * * * *"
-                            style={{ fontFamily: "monospace", width: 120 }}
-                          />
-                          <label
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={editScheduleEnabled}
-                              onChange={(e) =>
-                                setEditScheduleEnabled(e.target.checked)
-                              }
-                            />
-                            Enabled
-                          </label>
-                          <button
-                            onClick={handleScheduleUpdate}
-                            disabled={scheduleLoading}
-                          >
-                            Save
-                          </button>
-                          <button onClick={() => setEditingScheduleId(null)}>
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <code
-                            style={{
-                              background: "var(--bg)",
-                              padding: "2px 6px",
-                              borderRadius: 4,
-                            }}
-                          >
-                            {s.cron}
-                          </code>
-                          <span>
-                            {s.scope === "cluster"
-                              ? "cluster"
-                              : s.namespace || "—"}
-                          </span>
-                          {s.context && (
-                            <span title="context">{s.context}</span>
-                          )}
-                          <span
-                            style={{
-                              color: s.enabled
-                                ? "var(--success)"
-                                : "var(--muted)",
-                            }}
-                          >
-                            {s.enabled ? "On" : "Off"}
-                          </span>
-                          <button onClick={() => startEditSchedule(s)}>
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleScheduleDelete(s.id)}
-                            disabled={scheduleLoading}
-                          >
-                            Delete
-                          </button>
-                        </>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        handleScheduleCreate();
+                        setScheduleCreateDialogOpen(false);
+                      }}
+                      disabled={
+                        scheduleLoading ||
+                        !scheduleCreateCron.trim() ||
+                        (scheduleCreateScope === "namespace" &&
+                          !scheduleCreateNamespace.trim()) ||
+                        !/^(\*|[0-5]?\d) (\*|[01]?\d|2[0-3]) (\*|[012]?\d|3[01]) (\*|[01]?\d) (\*|[0-6])$/.test(
+                          scheduleCreateCron.trim(),
+                        )
+                      }
+                    >
+                      {scheduleLoading ? "Creating…" : "Create Schedule"}
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            {editingScheduleId && (
+              <Dialog
+                open={!!editingScheduleId}
+                onOpenChange={(open) => !open && setEditingScheduleId(null)}
+              >
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Edit Schedule</DialogTitle>
+                    <DialogDescription>
+                      Update the cron expression and enabled status
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-schedule-cron">
+                        Cron Expression (5 parts)
+                      </Label>
+                      <Input
+                        id="edit-schedule-cron"
+                        type="text"
+                        value={editScheduleCron}
+                        onChange={(e) => setEditScheduleCron(e.target.value)}
+                        placeholder="0 * * * *"
+                        className="font-mono"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Format: <code>minute hour day month weekday</code>
+                      </p>
+                      {editScheduleCron &&
+                        !/^(\*|[0-5]?\d) (\*|[01]?\d|2[0-3]) (\*|[012]?\d|3[01]) (\*|[01]?\d) (\*|[0-6])$/.test(
+                          editScheduleCron.trim(),
+                        ) && (
+                          <p className="text-xs text-destructive">
+                            Invalid cron expression
+                          </p>
+                        )}
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="edit-schedule-enabled"
+                        checked={editScheduleEnabled}
+                        onCheckedChange={(checked: boolean) =>
+                          setEditScheduleEnabled(checked === true)
+                        }
+                      />
+                      <Label
+                        htmlFor="edit-schedule-enabled"
+                        className="cursor-pointer"
+                      >
+                        Enabled
+                      </Label>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-4">
+                      <Button
+                        variant="outline"
+                        onClick={() => setEditingScheduleId(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          handleScheduleUpdate();
+                          setEditingScheduleId(null);
+                        }}
+                        disabled={
+                          scheduleLoading ||
+                          !editScheduleCron.trim() ||
+                          !/^(\*|[0-5]?\d) (\*|[01]?\d|2[0-3]) (\*|[012]?\d|3[01]) (\*|[01]?\d) (\*|[0-6])$/.test(
+                            editScheduleCron.trim(),
+                          )
+                        }
+                      >
+                        {scheduleLoading ? "Saving…" : "Save"}
+                      </Button>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
           </>
         )}
 
         {tab === "scan" && (
           <>
-            <div className="card">
-              <h2 style={{ marginTop: 0 }}>Cluster health scan</h2>
-              {scanError && (
-                <div className="error-box" role="alert">
-                  {scanError}
-                </div>
-              )}
-              <div className="form-row">
+            <PageHeader
+              title="Cluster Health Scan"
+              subtitle="Scan your cluster or namespace for security and configuration issues"
+            />
+            {scanError && (
+              <ErrorAlert
+                message={scanError}
+                onDismiss={() => setScanError(null)}
+              />
+            )}
+            <Card>
+              <CardHeader>
+                <CardTitle>Scan Configuration</CardTitle>
+                <CardDescription>
+                  Configure scan scope and options
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 {showContextSelect && (
-                  <>
-                    <label>Context</label>
-                    <select
+                  <div className="space-y-2">
+                    <Label htmlFor="scan-context-select">Context</Label>
+                    <Select
                       value={selectedContext}
-                      onChange={(e) => handleContextChange(e.target.value)}
+                      onValueChange={handleContextChange}
                     >
-                      {contexts.map((c) => (
-                        <option key={c.name} value={c.name}>
-                          {c.name}
-                          {c.current ? " (current)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </>
+                      <SelectTrigger id="scan-context-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {contexts.map((c) => (
+                          <SelectItem key={c.name} value={c.name}>
+                            {c.name}
+                            {c.current ? " (current)" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 )}
-              </div>
-              <div className="form-row">
-                <label>Scope</label>
-                <select
-                  value={scanScope}
-                  onChange={(e) =>
-                    setScanScope(e.target.value as "namespace" | "cluster")
-                  }
-                >
-                  <option value="namespace">Namespace</option>
-                  <option value="cluster">Cluster</option>
-                </select>
-              </div>
-              {scanScope === "namespace" && (
-                <div className="form-row">
-                  <label>Namespace</label>
-                  <select
-                    key={`scan-namespace-${selectedContext}-${namespaceKeyRef.current}`}
-                    value={scanNamespace}
-                    onChange={(e) => setScanNamespace(e.target.value)}
-                  >
-                    <option value="">Select...</option>
-                    {namespaces.map((ns) => (
-                      <option key={ns} value={ns}>
-                        {ns}
-                      </option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="scan-scope-select">Scope</Label>
+                    <Select
+                      value={scanScope}
+                      onValueChange={(v) =>
+                        setScanScope(v as "namespace" | "cluster")
+                      }
+                    >
+                      <SelectTrigger id="scan-scope-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="namespace">Namespace</SelectItem>
+                        <SelectItem value="cluster">Cluster</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {scanScope === "namespace" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="scan-namespace-select">Namespace</Label>
+                      <Select
+                        key={`scan-namespace-${selectedContext}-${namespaceKeyRef.current}`}
+                        value={scanNamespace}
+                        onValueChange={setScanNamespace}
+                      >
+                        <SelectTrigger id="scan-namespace-select">
+                          <SelectValue placeholder="Select namespace" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">Select...</SelectItem>
+                          {namespaces.map((ns) => (
+                            <SelectItem key={ns} value={ns}>
+                              {ns}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
-              )}
-              <div className="form-row">
-                <label>
+                <div className="flex items-center space-x-2">
                   <input
                     type="checkbox"
+                    id="scan-include-logs"
                     checked={scanIncludeLogs}
                     onChange={(e) => setScanIncludeLogs(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
                   />
-                  Include logs in evidence
-                </label>
-              </div>
-              <div className="form-row">
-                <button
+                  <Label htmlFor="scan-include-logs" className="cursor-pointer">
+                    Include logs in evidence
+                  </Label>
+                </div>
+                <Button
                   onClick={handleScan}
                   disabled={
                     scanLoading ||
                     (scanScope === "namespace" && !scanNamespace.trim())
                   }
+                  className="w-full md:w-auto"
                 >
                   {scanLoading ? "Scanning…" : "Scan"}
-                </button>
-              </div>
-            </div>
+                </Button>
+              </CardContent>
+            </Card>
 
             {scanResult && (
-              <div className="card">
-                <h2>
-                  {llmProviderLabel ? `${llmProviderLabel} – ` : ""}
-                  Scan results
-                  {scanResult.duration_ms != null &&
-                    scanResult.duration_ms >= 0 && (
-                      <>
-                        {" – "}
-                        {scanResult.duration_ms >= 1000
-                          ? `${(scanResult.duration_ms / 1000).toFixed(1)}s`
-                          : `${scanResult.duration_ms}ms`}
-                      </>
-                    )}
-                </h2>
-                {scanResult.error && (
-                  <div className="error-box" style={{ marginBottom: 12 }}>
-                    {scanResult.error}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle>
+                        {llmProviderLabel ? `${llmProviderLabel} – ` : ""}
+                        Scan Results
+                      </CardTitle>
+                      {scanResult.duration_ms != null &&
+                        scanResult.duration_ms >= 0 && (
+                          <CardDescription className="mt-1">
+                            Duration:{" "}
+                            {scanResult.duration_ms >= 1000
+                              ? `${(scanResult.duration_ms / 1000).toFixed(1)}s`
+                              : `${scanResult.duration_ms}ms`}
+                          </CardDescription>
+                        )}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={handleCreateIncidentFromScan}
+                        disabled={creatingIncidentFromScan || !scanResult.id}
+                        size="sm"
+                        variant="outline"
+                      >
+                        {creatingIncidentFromScan
+                          ? "Creating…"
+                          : "Create incident"}
+                      </Button>
+                      <Button
+                        onClick={() => setShowAddToIncident(!showAddToIncident)}
+                        disabled={incidentLoading}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Add to incident
+                      </Button>
+                    </div>
                   </div>
-                )}
-                {scanResult.summary_markdown && (
-                  <div className="markdown-body" style={{ marginBottom: 16 }}>
-                    {(() => {
-                      const summary = scanResult.summary_markdown!;
-                      const headingMatch = summary.match(
-                        /^##\s*Scan summary\s*(\((.*?)\))?/m,
-                      );
-                      const heading = headingMatch
-                        ? `Scan summary${headingMatch[1] ?? ""}`
-                        : "Scan summary";
-                      const counts = scanResult.counts ?? {};
-                      const severities = [
-                        { key: "critical", label: "Critical" },
-                        { key: "high", label: "High" },
-                        { key: "medium", label: "Medium" },
-                        { key: "low", label: "Low" },
-                        { key: "info", label: "Info" },
-                      ] as const;
-                      const total = scanResult.findings?.length ?? 0;
-                      return (
-                        <>
-                          <h2 style={{ fontSize: "1.1em", marginBottom: 4 }}>
-                            {heading}
-                          </h2>
-                          <div className="scan-summary-counts">
-                            {severities.map((s, i) => (
-                              <span key={s.key}>
-                                {i > 0 && (
-                                  <span className="severity-sep">|</span>
-                                )}
-                                <span className={`severity-${s.key}`}>
-                                  {s.label}: {counts[s.key] ?? 0}
-                                </span>
-                              </span>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {showAddToIncident && scanResult.id && (
+                    <div className="rounded-lg border p-4 space-y-2">
+                      <Input
+                        type="text"
+                        placeholder="Search incidents..."
+                        value={addToIncidentSearch}
+                        onChange={(e) => setAddToIncidentSearch(e.target.value)}
+                      />
+                      <div className="max-h-48 overflow-y-auto space-y-1">
+                        {incidentList
+                          .filter(
+                            (inc) =>
+                              addToIncidentSearch.trim() === "" ||
+                              inc.title
+                                .toLowerCase()
+                                .includes(addToIncidentSearch.toLowerCase()),
+                          )
+                          .map((inc) => (
+                            <Button
+                              key={inc.id}
+                              type="button"
+                              variant="outline"
+                              onClick={() =>
+                                handleAddToExistingIncident(
+                                  inc.id,
+                                  "scan",
+                                  scanResult.id!,
+                                )
+                              }
+                              disabled={incidentLoading}
+                              className="w-full justify-start text-left"
+                              size="sm"
+                            >
+                              {inc.title} ({inc.status})
+                            </Button>
+                          ))}
+                        {incidentList.filter(
+                          (inc) =>
+                            addToIncidentSearch.trim() === "" ||
+                            inc.title
+                              .toLowerCase()
+                              .includes(addToIncidentSearch.toLowerCase()),
+                        ).length === 0 && (
+                          <div className="p-2 text-sm text-muted-foreground text-center">
+                            No incidents found
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {scanResult.error && (
+                    <ErrorAlert message={scanResult.error} />
+                  )}
+                  {scanResult.summary_markdown && (
+                    <div className="rounded-lg border bg-muted/50 p-4">
+                      {(() => {
+                        const summary = scanResult.summary_markdown!;
+                        const headingMatch = summary.match(
+                          /^##\s*Scan summary\s*(\((.*?)\))?/m,
+                        );
+                        const heading = headingMatch
+                          ? `Scan summary${headingMatch[1] ?? ""}`
+                          : "Scan summary";
+                        const counts = scanResult.counts ?? {};
+                        const severities = [
+                          { key: "critical", label: "Critical" },
+                          { key: "high", label: "High" },
+                          { key: "medium", label: "Medium" },
+                          { key: "low", label: "Low" },
+                          { key: "info", label: "Info" },
+                        ] as const;
+                        const total = scanResult.findings?.length ?? 0;
+                        return (
+                          <>
+                            <h3 className="text-lg font-semibold mb-2">
+                              {heading}
+                            </h3>
+                            <div className="flex flex-wrap gap-2 mb-2">
+                              {severities.map((s) => (
+                                <div
+                                  key={s.key}
+                                  className="flex items-center gap-1"
+                                >
+                                  <SeverityBadge
+                                    severity={s.key}
+                                    className="text-xs"
+                                  />
+                                  <span className="text-xs">
+                                    {s.label}: {counts[s.key] ?? 0}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            <p className="text-sm text-muted-foreground">
+                              Total findings: {total}
+                            </p>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="severity-filter">Severity</Label>
+                      <Select
+                        value={scanFilterSeverity}
+                        onValueChange={setScanFilterSeverity}
+                      >
+                        <SelectTrigger
+                          id="severity-filter"
+                          className="w-[180px]"
+                        >
+                          <SelectValue placeholder="All severities" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">All</SelectItem>
+                          {severities.map((s) => (
+                            <SelectItem key={s} value={s}>
+                              {s}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="category-filter">Category</Label>
+                      <Select
+                        value={scanFilterCategory}
+                        onValueChange={setScanFilterCategory}
+                      >
+                        <SelectTrigger
+                          id="category-filter"
+                          className="w-[180px]"
+                        >
+                          <SelectValue placeholder="All categories" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">All</SelectItem>
+                          {categories.map((c) => (
+                            <SelectItem key={c} value={c}>
+                              {c}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  {sortedFindings.length > 0 ? (
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-[120px]">
+                              Severity
+                            </TableHead>
+                            <TableHead className="w-[150px]">
+                              Category
+                            </TableHead>
+                            <TableHead>Title</TableHead>
+                            <TableHead className="w-[120px]">Time</TableHead>
+                            <TableHead className="w-[100px]">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {sortedFindings.map((f) => (
+                            <TableRow
+                              key={f.id}
+                              className="cursor-pointer"
+                              onClick={() => setSelectedFinding(f)}
+                            >
+                              <TableCell>
+                                <SeverityBadge severity={f.severity} />
+                              </TableCell>
+                              <TableCell>
+                                <CategoryBadge category={f.category} />
+                              </TableCell>
+                              <TableCell className="font-medium">
+                                {f.title}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {(f.occurred_at ?? scanResult.created_at) &&
+                                  new Date(
+                                    f.occurred_at ?? scanResult.created_at!,
+                                  ).toLocaleString(undefined, {
+                                    month: "2-digit",
+                                    day: "2-digit",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedFinding(f);
+                                  }}
+                                >
+                                  View
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <EmptyState
+                      title="No findings"
+                      description="No findings match the current filters"
+                    />
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            <Sheet
+              open={!!selectedFinding}
+              onOpenChange={(open) => !open && setSelectedFinding(null)}
+            >
+              <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+                {selectedFinding && (
+                  <>
+                    <SheetHeader>
+                      <div className="flex items-center gap-2">
+                        <SeverityBadge severity={selectedFinding.severity} />
+                        <CategoryBadge category={selectedFinding.category} />
+                      </div>
+                      <SheetTitle>{selectedFinding.title}</SheetTitle>
+                      <SheetDescription>
+                        {selectedFinding.description ||
+                          "No description available"}
+                      </SheetDescription>
+                    </SheetHeader>
+                    <div className="mt-6 space-y-4">
+                      {selectedFinding.affected_refs?.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-semibold mb-2">
+                            Affected Resources
+                          </h4>
+                          <div className="space-y-1">
+                            {selectedFinding.affected_refs.map((r, i) => (
+                              <Badge key={i} variant="outline" className="mr-2">
+                                {r.kind || "?"}/
+                                {r.namespace ? `${r.namespace}/` : ""}
+                                {r.name || "?"}
+                              </Badge>
                             ))}
                           </div>
-                          <div className="scan-summary-total">
-                            • Total findings: {total}
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                )}
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 16,
-                    marginBottom: 12,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <label>
-                    Severity{" "}
-                    <select
-                      value={scanFilterSeverity}
-                      onChange={(e) => setScanFilterSeverity(e.target.value)}
-                    >
-                      <option value="">All</option>
-                      {severities.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Category{" "}
-                    <select
-                      value={scanFilterCategory}
-                      onChange={(e) => setScanFilterCategory(e.target.value)}
-                    >
-                      <option value="">All</option>
-                      {categories.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div
-                  style={{ display: "flex", gap: 24, alignItems: "flex-start" }}
-                >
-                  <ul
-                    style={{
-                      listStyle: "none",
-                      padding: 0,
-                      flex: 1,
-                      minWidth: 0,
-                    }}
-                  >
-                    {sortedFindings.map((f) => (
-                      <li key={f.id} style={{ marginBottom: 8 }}>
-                        <button
-                          type="button"
-                          className="link-button"
-                          style={{
-                            textAlign: "left",
-                            padding: 8,
-                            border:
-                              selectedFinding?.id === f.id
-                                ? "2px solid #1976d2"
-                                : "1px solid #eee",
-                            borderRadius: 4,
-                            width: "100%",
-                          }}
-                          onClick={() => setSelectedFinding(f)}
-                        >
-                          {(f.occurred_at ?? scanResult.created_at) && (
-                            <span
-                              style={{
-                                marginRight: 8,
-                                fontSize: 11,
-                                color: "#666",
-                                flexShrink: 0,
-                              }}
-                            >
-                              {new Date(
-                                f.occurred_at ?? scanResult.created_at!,
-                              ).toLocaleString(undefined, {
-                                month: "2-digit",
-                                day: "2-digit",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          )}
-                          <span
-                            style={{
-                              marginRight: 8,
-                              fontWeight: 600,
-                              textTransform: "uppercase",
-                              fontSize: 11,
-                            }}
-                          >
-                            {f.severity}
-                          </span>
-                          [{f.category}] {f.title}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  {selectedFinding && (
-                    <div
-                      className="card"
-                      style={{
-                        flex: "1 1 400px",
-                        maxWidth: 500,
-                        margin: 0,
-                        position: "sticky",
-                        top: 16,
-                      }}
-                    >
-                      <h3 style={{ marginTop: 0 }}>
-                        [{selectedFinding.severity}] {selectedFinding.title}
-                      </h3>
-                      <p style={{ color: "#666", fontSize: 14 }}>
-                        {selectedFinding.description}
-                      </p>
-                      {selectedFinding.affected_refs?.length > 0 && (
-                        <p style={{ fontSize: 13 }}>
-                          <strong>Affected:</strong>{" "}
-                          {selectedFinding.affected_refs
-                            .map(
-                              (r) =>
-                                `${r.kind || "?"}/${r.namespace ? r.namespace + "/" : ""}${r.name || "?"}`,
-                            )
-                            .join(", ")}
-                        </p>
+                        </div>
                       )}
                       {selectedFinding.evidence_snippet && (
-                        <div style={{ marginTop: 12 }}>
-                          <strong>Evidence</strong>
-                          <pre
-                            className="evidence-block"
-                            style={{
-                              marginTop: 4,
-                              padding: 12,
-                              maxHeight: 300,
-                              fontSize: 12,
-                            }}
-                          >
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-sm font-semibold">Evidence</h4>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                navigator.clipboard.writeText(
+                                  selectedFinding.evidence_snippet!,
+                                );
+                              }}
+                            >
+                              <Copy className="h-4 w-4 mr-2" />
+                              Copy
+                            </Button>
+                          </div>
+                          <div className="rounded-lg border bg-muted/30 p-4 font-mono text-xs overflow-auto max-h-96">
                             {/^\s*[{\[]/.test(
                               selectedFinding.evidence_snippet,
                             ) ? (
@@ -1598,668 +2234,1000 @@ function App() {
                             ) : (
                               selectedFinding.evidence_snippet
                             )}
-                          </pre>
+                          </div>
                         </div>
                       )}
                       {selectedFinding.suggested_commands?.length > 0 && (
-                        <div style={{ marginTop: 12 }}>
-                          <strong>Suggested commands</strong>
-                          <ul style={{ margin: 4, paddingLeft: 20 }}>
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-sm font-semibold">
+                              Suggested Commands
+                            </h4>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                navigator.clipboard.writeText(
+                                  selectedFinding.suggested_commands!.join(
+                                    "\n",
+                                  ),
+                                );
+                              }}
+                            >
+                              <Copy className="h-4 w-4 mr-2" />
+                              Copy All
+                            </Button>
+                          </div>
+                          <div className="space-y-2">
                             {selectedFinding.suggested_commands.map(
                               (cmd, i) => (
-                                <li key={i}>
-                                  <code style={{ fontSize: 12 }}>{cmd}</code>
-                                </li>
+                                <div
+                                  key={i}
+                                  className="flex items-center justify-between rounded-lg border bg-muted/30 p-3 font-mono text-xs"
+                                >
+                                  <code>{cmd}</code>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(cmd);
+                                    }}
+                                  >
+                                    <Copy className="h-3 w-3" />
+                                  </Button>
+                                </div>
                               ),
                             )}
-                          </ul>
+                          </div>
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
-              </div>
-            )}
+                  </>
+                )}
+              </SheetContent>
+            </Sheet>
 
-            <div className="card">
-              <h2>Recent scans</h2>
-              <ul style={{ listStyle: "none", padding: 0 }}>
-                {scanList.slice(0, 15).map((s) => (
-                  <li key={s.id} style={{ marginBottom: 8 }}>
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={async () => {
-                        try {
-                          const detail = await api.scanGet(s.id);
-                          const findings = detail.findings ?? [];
-                          const counts: Record<string, number> = {};
-                          findings.forEach((f) => {
-                            counts[f.severity] = (counts[f.severity] ?? 0) + 1;
-                          });
-                          setScanResult({
-                            id: detail.id,
-                            created_at: detail.created_at ?? undefined,
-                            summary_markdown: detail.summary_markdown ?? null,
-                            error: detail.error ?? null,
-                            findings,
-                            counts,
-                          });
-                          setSelectedFinding(null);
-                        } catch {
-                          setScanResult(null);
-                        }
-                      }}
-                    >
-                      {s.scope} {s.namespace ? `· ${s.namespace}` : ""} –{" "}
-                      {s.findings_count} findings –{" "}
-                      {new Date(s.created_at).toLocaleString()}
-                    </button>
-                    {s.error && (
-                      <span style={{ color: "#c62828", marginLeft: 8 }}>
-                        Partial
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              {scanList.length === 0 && (
-                <p style={{ color: "#666" }}>No scans yet.</p>
-              )}
-            </div>
+            <Card>
+              <CardHeader>
+                <CardTitle>Recent Scans</CardTitle>
+                <CardDescription>
+                  View and load previous scan results
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {scanList.length > 0 ? (
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Scope</TableHead>
+                          <TableHead>Namespace</TableHead>
+                          <TableHead>Findings</TableHead>
+                          <TableHead>Created</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {scanList.slice(0, 15).map((s) => (
+                          <TableRow key={s.id}>
+                            <TableCell className="font-medium">
+                              {s.scope}
+                            </TableCell>
+                            <TableCell>{s.namespace || "—"}</TableCell>
+                            <TableCell>{s.findings_count}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {new Date(s.created_at).toLocaleString()}
+                            </TableCell>
+                            <TableCell>
+                              {s.error ? (
+                                <Badge variant="destructive">Partial</Badge>
+                              ) : (
+                                <Badge variant="outline">Complete</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={async () => {
+                                  try {
+                                    const detail = await api.scanGet(s.id);
+                                    const findings = detail.findings ?? [];
+                                    const counts: Record<string, number> = {};
+                                    findings.forEach((f) => {
+                                      counts[f.severity] =
+                                        (counts[f.severity] ?? 0) + 1;
+                                    });
+                                    setScanResult({
+                                      id: detail.id,
+                                      created_at:
+                                        detail.created_at ?? undefined,
+                                      summary_markdown:
+                                        detail.summary_markdown ?? null,
+                                      error: detail.error ?? null,
+                                      findings,
+                                      counts,
+                                    });
+                                    setSelectedFinding(null);
+                                  } catch {
+                                    setScanResult(null);
+                                  }
+                                }}
+                              >
+                                Load
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No scans yet"
+                    description="Run a scan to see results here"
+                  />
+                )}
+              </CardContent>
+            </Card>
           </>
         )}
 
         {tab === "analyze" && (
           <>
-            <div className="card">
-              <h2 style={{ marginTop: 0 }}>Analyze</h2>
-              {error && (
-                <div className="error-box" role="alert">
-                  {error}
-                </div>
-              )}
-              <div className="form-row">
+            <PageHeader
+              title="Analyze Resource"
+              subtitle="Troubleshoot Kubernetes resources with AI-powered analysis"
+            />
+            {error && (
+              <ErrorAlert message={error} onDismiss={() => setError(null)} />
+            )}
+            <Card>
+              <CardHeader>
+                <CardTitle>Resource Selection</CardTitle>
+                <CardDescription>
+                  Select a Kubernetes resource to analyze
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 {showContextSelect && (
-                  <>
-                    <label>Context</label>
-                    <select
+                  <div className="space-y-2">
+                    <Label htmlFor="context-select">Context</Label>
+                    <Select
                       value={selectedContext}
-                      onChange={(e) => handleContextChange(e.target.value)}
+                      onValueChange={handleContextChange}
                     >
-                      {contexts.map((c) => (
-                        <option key={c.name} value={c.name}>
-                          {c.name}
-                          {c.current ? " (current)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </>
+                      <SelectTrigger id="context-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {contexts.map((c) => (
+                          <SelectItem key={c.name} value={c.name}>
+                            {c.name}
+                            {c.current ? " (current)" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 )}
-              </div>
-              <div className="form-row">
-                <label>Namespace</label>
-                <select
-                  key={`namespace-${selectedContext}-${namespaceKeyRef.current}`}
-                  value={selectedNamespace}
-                  onChange={(e) => setSelectedNamespace(e.target.value)}
-                  disabled={kind === "Node"}
-                >
-                  <option value="">--</option>
-                  {namespaces.map((ns) => (
-                    <option key={ns} value={ns}>
-                      {ns}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-row">
-                <label>Target</label>
-                <select
-                  value={kind}
-                  onChange={(e) => setKind(e.target.value as Kind)}
-                >
-                  <option value="Pod">Pod</option>
-                  <option value="Deployment">Deployment</option>
-                  <option value="StatefulSet">StatefulSet</option>
-                  <option value="Node">Node</option>
-                </select>
-              </div>
-              <div className="form-row">
-                <label>Resource</label>
-                <select
-                  value={selectedName}
-                  onChange={(e) => setSelectedName(e.target.value)}
-                  disabled={resourceNames.length === 0}
-                >
-                  <option value="">Select...</option>
-                  {resourceNames.map((r) => (
-                    <option key={r.name} value={r.name}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-row">
-                <label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="namespace-select">Namespace</Label>
+                    <Select
+                      key={`namespace-${selectedContext}-${namespaceKeyRef.current}`}
+                      value={selectedNamespace}
+                      onValueChange={setSelectedNamespace}
+                      disabled={kind === "Node"}
+                    >
+                      <SelectTrigger id="namespace-select">
+                        <SelectValue placeholder="Select namespace" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">--</SelectItem>
+                        {namespaces.map((ns) => (
+                          <SelectItem key={ns} value={ns}>
+                            {ns}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="kind-select">Target</Label>
+                    <Select
+                      value={kind}
+                      onValueChange={(v) => setKind(v as Kind)}
+                    >
+                      <SelectTrigger id="kind-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Pod">Pod</SelectItem>
+                        <SelectItem value="Deployment">Deployment</SelectItem>
+                        <SelectItem value="StatefulSet">StatefulSet</SelectItem>
+                        <SelectItem value="Node">Node</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="resource-select">Resource</Label>
+                  <Select
+                    value={selectedName}
+                    onValueChange={setSelectedName}
+                    disabled={resourceNames.length === 0}
+                  >
+                    <SelectTrigger id="resource-select">
+                      <SelectValue placeholder="Select resource" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Select...</SelectItem>
+                      {resourceNames.map((r) => (
+                        <SelectItem key={r.name} value={r.name}>
+                          {r.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center space-x-2">
                   <input
                     type="checkbox"
+                    id="include-logs"
                     checked={includePreviousLogs}
                     onChange={(e) => setIncludePreviousLogs(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
                   />
-                  Include previous logs (e.g. crash)
-                </label>
-              </div>
-              <div className="form-row">
-                <button
+                  <Label htmlFor="include-logs" className="cursor-pointer">
+                    Include previous logs (e.g. crash)
+                  </Label>
+                </div>
+                <Button
                   onClick={handleAnalyze}
                   disabled={loading || !selectedName.trim()}
+                  className="w-full md:w-auto"
                 >
                   {loading ? "Analyzing…" : "Analyze"}
-                </button>
-              </div>
-            </div>
+                </Button>
+              </CardContent>
+            </Card>
 
             {result && (
-              <div className="card">
-                <h2>
-                  {llmProviderLabel ? `${llmProviderLabel} – ` : ""}
-                  Result
-                  {result.tokens_used > 0 &&
-                    ` – ${result.tokens_used.toLocaleString()} tokens`}
-                  {result.response_time_ms > 0 &&
-                    (result.response_time_ms >= 1000
-                      ? ` – ${(result.response_time_ms / 1000).toFixed(1)}s`
-                      : ` – ${result.response_time_ms}ms`)}
-                </h2>
-                {result.error && (
-                  <div className="error-box">{result.error}</div>
-                )}
-                {result.analysis_markdown && (
-                  <div className="markdown-body">
-                    <ReactMarkdown>{result.analysis_markdown}</ReactMarkdown>
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>
+                      {llmProviderLabel ? `${llmProviderLabel} – ` : ""}
+                      Analysis Result
+                    </CardTitle>
+                    <StatPills
+                      items={
+                        [
+                          result.tokens_used > 0
+                            ? {
+                                label: "Tokens",
+                                value: result.tokens_used.toLocaleString(),
+                              }
+                            : null,
+                          result.response_time_ms > 0
+                            ? {
+                                label: "Time",
+                                value:
+                                  result.response_time_ms >= 1000
+                                    ? `${(result.response_time_ms / 1000).toFixed(1)}s`
+                                    : `${result.response_time_ms}ms`,
+                              }
+                            : null,
+                        ].filter(Boolean) as Array<{
+                          label: string;
+                          value: string | number;
+                        }>
+                      }
+                    />
                   </div>
-                )}
-                {result.truncation_report?.truncated && (
-                  <p style={{ fontSize: 12, color: "#666" }}>
-                    Evidence was truncated (
-                    {result.truncation_report.total_chars_after} /{" "}
-                    {result.truncation_report.total_chars_before} chars).
-                  </p>
-                )}
-                <div style={{ marginTop: 16 }}>
-                  <button
-                    type="button"
-                    className="toggle-header"
-                    onClick={() => setEvidenceOpen(!evidenceOpen)}
-                  >
-                    {evidenceOpen ? "▼" : "▶"} Raw evidence (sanitized)
-                  </button>
-                  {evidenceOpen && (
-                    <div className="evidence-block">
-                      <JsonHighlight
-                        text={JSON.stringify(result.evidence, null, 2)}
-                      />
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {result.error && <ErrorAlert message={result.error} />}
+                  {result.analysis_markdown && (
+                    <div className="markdown-body rounded-lg border bg-muted/50 p-4">
+                      <ReactMarkdown>{result.analysis_markdown}</ReactMarkdown>
                     </div>
                   )}
-                </div>
-                {(result.analysis_json?.heuristics?.length ||
-                  result.analysis_json?.why?.length ||
-                  result.analysis_json?.uncertain?.length ||
-                  (result.analysis_json?.follow_up_questions?.length ?? 0) >
-                    0) && (
-                  <div style={{ marginTop: 12 }}>
-                    <button
+                  {result.truncation_report?.truncated && (
+                    <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
+                      Evidence was truncated (
+                      {result.truncation_report.total_chars_after} /{" "}
+                      {result.truncation_report.total_chars_before} chars).
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Button
                       type="button"
-                      className="toggle-header"
-                      onClick={() => setExplainOpen(!explainOpen)}
+                      variant="outline"
+                      onClick={() => setEvidenceOpen(!evidenceOpen)}
+                      className="w-full justify-between"
                     >
-                      {explainOpen ? "▼" : "▶"} Explain reasoning
-                    </button>
-                    {explainOpen && (
-                      <div className="evidence-block" style={{ padding: 12 }}>
-                        {result.analysis_json.heuristics?.length ? (
-                          <section style={{ marginBottom: 16 }}>
-                            <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
-                              Heuristic signals
-                            </h4>
-                            <ul style={{ margin: 0, paddingLeft: 20 }}>
-                              {result.analysis_json.heuristics.map((h, i) => (
-                                <li key={i}>
-                                  <strong>{h.condition}</strong>{" "}
-                                  {h.evidence_refs?.length
-                                    ? `(${h.evidence_refs.join(", ")})`
-                                    : ""}
-                                  <ul
-                                    style={{
-                                      margin: "4px 0 0",
-                                      paddingLeft: 16,
-                                    }}
-                                  >
-                                    {h.candidates?.map((c, j) => (
-                                      <li key={j}>
-                                        {c.cause} ({c.confidence})
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </li>
-                              ))}
-                            </ul>
-                          </section>
-                        ) : null}
-                        {result.analysis_json.why?.length ? (
-                          <section style={{ marginBottom: 16 }}>
-                            <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
-                              Evidence mapping
-                            </h4>
-                            <ul style={{ margin: 0, paddingLeft: 20 }}>
-                              {result.analysis_json.why.map((w, i) => (
-                                <li key={i}>
-                                  <code style={{ fontSize: 12 }}>{w.ref}</code>:{" "}
-                                  {w.explanation}
-                                </li>
-                              ))}
-                            </ul>
-                          </section>
-                        ) : null}
-                        {(result.analysis_json.uncertain?.length ||
-                          (result.analysis_json.follow_up_questions?.length ??
-                            0) > 0) && (
-                          <section>
-                            <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
-                              Uncertain / follow-up questions
-                            </h4>
-                            <ul style={{ margin: 0, paddingLeft: 20 }}>
-                              {(result.analysis_json.uncertain ?? []).map(
-                                (u, i) => (
-                                  <li key={`u-${i}`}>{u}</li>
-                                ),
-                              )}
-                              {(
-                                result.analysis_json.follow_up_questions ?? []
-                              ).map((q, i) => (
-                                <li key={`q-${i}`}>{q}</li>
-                              ))}
-                            </ul>
-                          </section>
-                        )}
+                      <span>Raw evidence (sanitized)</span>
+                      <span>{evidenceOpen ? "▼" : "▶"}</span>
+                    </Button>
+                    {evidenceOpen && (
+                      <div className="rounded-lg border bg-muted/30 p-4 font-mono text-xs overflow-auto max-h-96">
+                        <JsonHighlight
+                          text={JSON.stringify(result.evidence, null, 2)}
+                        />
                       </div>
                     )}
                   </div>
-                )}
-              </div>
-            )}
-
-            {compareResult && (
-              <div className="card">
-                <h2>Compare analyses</h2>
-                <button
-                  type="button"
-                  className="link-button"
-                  onClick={() => {
-                    setCompareResult(null);
-                    setCompareError(null);
-                  }}
-                >
-                  ← Back
-                </button>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 16,
-                    marginTop: 12,
-                  }}
-                >
-                  <div>
-                    <h3 style={{ marginTop: 0 }}>Analysis A</h3>
-                    <p style={{ margin: 0, fontSize: 14 }}>
-                      {compareResult.analysis_a.kind}{" "}
-                      {compareResult.analysis_a.name}{" "}
-                      {compareResult.analysis_a.namespace &&
-                        `(${compareResult.analysis_a.namespace})`}
-                    </p>
-                    <p
-                      style={{ margin: "4px 0 0", color: "#666", fontSize: 12 }}
-                    >
-                      {new Date(
-                        compareResult.analysis_a.created_at,
-                      ).toLocaleString()}
-                    </p>
-                  </div>
-                  <div>
-                    <h3 style={{ marginTop: 0 }}>Analysis B</h3>
-                    <p style={{ margin: 0, fontSize: 14 }}>
-                      {compareResult.analysis_b.kind}{" "}
-                      {compareResult.analysis_b.name}{" "}
-                      {compareResult.analysis_b.namespace &&
-                        `(${compareResult.analysis_b.namespace})`}
-                    </p>
-                    <p
-                      style={{ margin: "4px 0 0", color: "#666", fontSize: 12 }}
-                    >
-                      {new Date(
-                        compareResult.analysis_b.created_at,
-                      ).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-                {compareResult.likely_reasoning && (
-                  <div style={{ marginTop: 16 }}>
-                    <h3 style={{ marginTop: 0 }}>Likely reasoning</h3>
-                    <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-                      {compareResult.likely_reasoning}
-                    </p>
-                  </div>
-                )}
-                {compareResult.diff_summary && (
-                  <div style={{ marginTop: 16 }}>
-                    <h3 style={{ marginTop: 0 }}>Diff summary</h3>
-                    <div className="markdown-body">
-                      <ReactMarkdown>
-                        {compareResult.diff_summary}
-                      </ReactMarkdown>
-                    </div>
-                  </div>
-                )}
-                <div style={{ marginTop: 16 }}>
-                  <h3 style={{ marginTop: 0 }}>Copy kubectl commands</h3>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: 12,
-                    }}
-                  >
-                    <div>
-                      <p style={{ margin: "0 0 8px", fontSize: 13 }}>
-                        From A (
-                        {compareResult.analysis_a.created_at.slice(0, 10)})
-                      </p>
-                      {(compareResult.analysis_a.kubectl_commands ?? [])
-                        .length > 0 ? (
-                        <button
-                          type="button"
-                          className="primary"
-                          onClick={() =>
-                            copyKubectlCommands(
-                              compareResult.analysis_a.kubectl_commands ?? [],
-                            )
-                          }
-                        >
-                          Copy{" "}
-                          {compareResult.analysis_a.kubectl_commands?.length}{" "}
-                          commands
-                        </button>
-                      ) : (
-                        <span style={{ color: "#666", fontSize: 13 }}>
-                          No commands
-                        </span>
-                      )}
-                    </div>
-                    <div>
-                      <p style={{ margin: "0 0 8px", fontSize: 13 }}>
-                        From B (
-                        {compareResult.analysis_b.created_at.slice(0, 10)})
-                      </p>
-                      {(compareResult.analysis_b.kubectl_commands ?? [])
-                        .length > 0 ? (
-                        <button
-                          type="button"
-                          className="primary"
-                          onClick={() =>
-                            copyKubectlCommands(
-                              compareResult.analysis_b.kubectl_commands ?? [],
-                            )
-                          }
-                        >
-                          Copy{" "}
-                          {compareResult.analysis_b.kubectl_commands?.length}{" "}
-                          commands
-                        </button>
-                      ) : (
-                        <span style={{ color: "#666", fontSize: 13 }}>
-                          No commands
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {viewHistoryId && !compareResult && (
-              <div className="card">
-                <h2>History – {viewHistoryId.slice(0, 8)}</h2>
-                <button
-                  type="button"
-                  className="link-button"
-                  onClick={() => {
-                    setViewHistoryId(null);
-                    setHistoryDetail(null);
-                  }}
-                >
-                  ← Back
-                </button>
-                {historyDetail && (
-                  <>
-                    <p>
-                      <strong>{historyDetail.kind}</strong> {historyDetail.name}{" "}
-                      {historyDetail.namespace &&
-                        `(${historyDetail.namespace})`}
-                    </p>
-                    {historyDetail.analysis_markdown && (
-                      <div className="markdown-body">
-                        <ReactMarkdown>
-                          {historyDetail.analysis_markdown}
-                        </ReactMarkdown>
-                      </div>
-                    )}
-                    {historyDetail.analysis_json &&
-                      (historyDetail.analysis_json.heuristics?.length ||
-                        historyDetail.analysis_json.why?.length ||
-                        historyDetail.analysis_json.uncertain?.length ||
-                        (historyDetail.analysis_json.follow_up_questions
-                          ?.length ?? 0) > 0) && (
-                        <div style={{ marginTop: 12 }}>
-                          <button
-                            type="button"
-                            className="toggle-header"
-                            onClick={() => setExplainOpen(!explainOpen)}
-                          >
-                            {explainOpen ? "▼" : "▶"} Explain reasoning
-                          </button>
-                          {explainOpen && (
-                            <div
-                              className="evidence-block"
-                              style={{ padding: 12 }}
-                            >
-                              {historyDetail.analysis_json.heuristics
-                                ?.length ? (
-                                <section style={{ marginBottom: 16 }}>
-                                  <h4
-                                    style={{ margin: "0 0 8px", fontSize: 14 }}
-                                  >
-                                    Heuristic signals
-                                  </h4>
-                                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                                    {historyDetail.analysis_json.heuristics.map(
-                                      (h, i) => (
-                                        <li key={i}>
-                                          <strong>{h.condition}</strong>{" "}
-                                          {h.evidence_refs?.length
-                                            ? `(${h.evidence_refs.join(", ")})`
-                                            : ""}
-                                          <ul
-                                            style={{
-                                              margin: "4px 0 0",
-                                              paddingLeft: 16,
-                                            }}
-                                          >
-                                            {h.candidates?.map((c, j) => (
-                                              <li key={j}>
-                                                {c.cause} ({c.confidence})
-                                              </li>
-                                            ))}
-                                          </ul>
+                  {(result.analysis_json?.heuristics?.length ||
+                    result.analysis_json?.why?.length ||
+                    result.analysis_json?.uncertain?.length ||
+                    (result.analysis_json?.follow_up_questions?.length ?? 0) >
+                      0) && (
+                    <div className="space-y-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setExplainOpen(!explainOpen)}
+                        className="w-full justify-between"
+                      >
+                        <span>Explain reasoning</span>
+                        <span>{explainOpen ? "▼" : "▶"}</span>
+                      </Button>
+                      {explainOpen && (
+                        <div className="rounded-lg border bg-muted/30 p-4 space-y-4">
+                          {result.analysis_json.heuristics?.length ? (
+                            <section className="space-y-2">
+                              <h4 className="text-sm font-semibold">
+                                Heuristic signals
+                              </h4>
+                              <ul className="list-disc list-inside space-y-1 text-sm">
+                                {result.analysis_json.heuristics.map((h, i) => (
+                                  <li key={i}>
+                                    <strong>{h.condition}</strong>{" "}
+                                    {h.evidence_refs?.length
+                                      ? `(${h.evidence_refs.join(", ")})`
+                                      : ""}
+                                    <ul className="list-disc list-inside ml-4 space-y-1 text-sm">
+                                      {h.candidates?.map((c, j) => (
+                                        <li key={j}>
+                                          {c.cause} ({c.confidence})
                                         </li>
-                                      ),
-                                    )}
-                                  </ul>
-                                </section>
-                              ) : null}
-                              {historyDetail.analysis_json.why?.length ? (
-                                <section style={{ marginBottom: 16 }}>
-                                  <h4
-                                    style={{ margin: "0 0 8px", fontSize: 14 }}
-                                  >
-                                    Evidence mapping
-                                  </h4>
-                                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                                    {historyDetail.analysis_json.why.map(
-                                      (w, i) => (
-                                        <li key={i}>
-                                          <code style={{ fontSize: 12 }}>
-                                            {w.ref}
-                                          </code>
-                                          : {w.explanation}
-                                        </li>
-                                      ),
-                                    )}
-                                  </ul>
-                                </section>
-                              ) : null}
-                              {(historyDetail.analysis_json.uncertain?.length ||
-                                (historyDetail.analysis_json.follow_up_questions
-                                  ?.length ?? 0) > 0) && (
-                                <section>
-                                  <h4
-                                    style={{ margin: "0 0 8px", fontSize: 14 }}
-                                  >
-                                    Uncertain / follow-up questions
-                                  </h4>
-                                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                                    {(
-                                      historyDetail.analysis_json.uncertain ??
-                                      []
-                                    ).map((u, i) => (
-                                      <li key={`u-${i}`}>{u}</li>
-                                    ))}
-                                    {(
-                                      historyDetail.analysis_json
-                                        .follow_up_questions ?? []
-                                    ).map((q, i) => (
-                                      <li key={`q-${i}`}>{q}</li>
-                                    ))}
-                                  </ul>
-                                </section>
-                              )}
-                            </div>
+                                      ))}
+                                    </ul>
+                                  </li>
+                                ))}
+                              </ul>
+                            </section>
+                          ) : null}
+                          {result.analysis_json.why?.length ? (
+                            <section className="space-y-2">
+                              <h4 className="text-sm font-semibold">
+                                Evidence mapping
+                              </h4>
+                              <ul className="list-disc list-inside space-y-1 text-sm">
+                                {result.analysis_json.why.map((w, i) => (
+                                  <li key={i}>
+                                    <code className="text-xs bg-muted px-1 rounded">
+                                      {w.ref}
+                                    </code>
+                                    : {w.explanation}
+                                  </li>
+                                ))}
+                              </ul>
+                            </section>
+                          ) : null}
+                          {(result.analysis_json.uncertain?.length ||
+                            (result.analysis_json.follow_up_questions?.length ??
+                              0) > 0) && (
+                            <section className="space-y-2">
+                              <h4 className="text-sm font-semibold">
+                                Uncertain / follow-up questions
+                              </h4>
+                              <ul className="list-disc list-inside space-y-1 text-sm">
+                                {(result.analysis_json.uncertain ?? []).map(
+                                  (u, i) => (
+                                    <li key={`u-${i}`}>{u}</li>
+                                  ),
+                                )}
+                                {(
+                                  result.analysis_json.follow_up_questions ?? []
+                                ).map((q, i) => (
+                                  <li key={`q-${i}`}>{q}</li>
+                                ))}
+                              </ul>
+                            </section>
                           )}
                         </div>
                       )}
-                    {historyDetail.error && (
-                      <div className="error-box">{historyDetail.error}</div>
-                    )}
-                  </>
-                )}
-              </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             )}
-
-            <div className="card">
-              <h2>History</h2>
-              {compareError && (
-                <div
-                  className="error-box"
-                  role="alert"
-                  style={{ marginBottom: 12 }}
-                >
-                  {compareError}
-                </div>
-              )}
-              <p style={{ fontSize: 13, color: "#666", marginBottom: 8 }}>
-                Select two analyses and click Compare.
-              </p>
-              <ul style={{ listStyle: "none", padding: 0 }}>
-                {history.slice(0, 15).map((h) => (
-                  <li
-                    key={h.id}
-                    style={{
-                      marginBottom: 8,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={compareSelectedIds.includes(h.id)}
-                      onChange={() => toggleCompareSelection(h.id)}
-                      aria-label={`Select ${h.kind} ${h.name} for compare`}
-                    />
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={() => openHistoryDetail(h.id)}
-                      style={{ flex: 1, textAlign: "left" }}
-                    >
-                      {h.kind} {h.name} {h.namespace && `(${h.namespace})`} –{" "}
-                      {new Date(h.created_at).toLocaleString()}
-                    </button>
-                    {h.error && <span style={{ color: "#c62828" }}>Error</span>}
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={async () => {
-                        if (
-                          confirm(`Delete analysis for ${h.kind} ${h.name}?`)
-                        ) {
-                          try {
-                            await api.historyDelete(h.id);
-                            // Remove from local state immediately
-                            setHistory((prev) =>
-                              prev.filter((item) => item.id !== h.id),
-                            );
-                            // Also remove from compare selection if selected
-                            setCompareSelectedIds((prev) =>
-                              prev.filter((id) => id !== h.id),
-                            );
-                          } catch (e) {
-                            setError(`Failed to delete: ${e}`);
-                          }
-                        }
-                      }}
-                      style={{
-                        color: "#c62828",
-                        fontSize: 12,
-                        padding: "4px 8px",
-                      }}
-                      title="Delete this analysis"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {compareSelectedIds.length === 2 && (
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={compareLoading}
-                  onClick={runCompare}
-                  style={{ marginTop: 8 }}
-                >
-                  {compareLoading ? "Comparing…" : "Compare selected"}
-                </button>
-              )}
-              {history.length === 0 && (
-                <p style={{ color: "#666" }}>No analyses yet.</p>
-              )}
-            </div>
           </>
         )}
-      </main>
-    </div>
+
+        {tab === "history" && (
+          <>
+            <PageHeader
+              title="Analysis History"
+              subtitle="View and manage past Kubernetes resource analyses"
+            />
+            {history.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Recent Analyses</CardTitle>
+                  <CardDescription>
+                    Click a row to view analysis details
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[180px]">Created</TableHead>
+                          <TableHead className="w-[120px]">Context</TableHead>
+                          <TableHead className="w-[120px]">Namespace</TableHead>
+                          <TableHead>Resource</TableHead>
+                          <TableHead className="w-[100px]">Tokens</TableHead>
+                          <TableHead className="w-[100px]">Latency</TableHead>
+                          <TableHead className="w-[80px]">Status</TableHead>
+                          <TableHead className="w-[100px]">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {history.map((h) => (
+                          <TableRow
+                            key={h.id}
+                            className="cursor-pointer"
+                            onClick={() => openHistoryDetail(h.id)}
+                          >
+                            <TableCell className="text-sm">
+                              {new Date(h.created_at).toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {h.context || "—"}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {h.namespace || "—"}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Badge
+                                  variant="outline"
+                                  className="font-mono text-xs"
+                                >
+                                  {h.kind}
+                                </Badge>
+                                <span className="font-medium">{h.name}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              —
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              —
+                            </TableCell>
+                            <TableCell>
+                              {h.error ? (
+                                <Badge variant="destructive">Error</Badge>
+                              ) : (
+                                <Badge variant="outline">Success</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openHistoryDetail(h.id);
+                                  }}
+                                >
+                                  View
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (
+                                      confirm(
+                                        `Delete analysis for ${h.kind} ${h.name}?`,
+                                      )
+                                    ) {
+                                      try {
+                                        await api.historyDelete(h.id);
+                                        setHistory((prev) =>
+                                          prev.filter(
+                                            (item) => item.id !== h.id,
+                                          ),
+                                        );
+                                      } catch (e) {
+                                        setError(`Failed to delete: ${e}`);
+                                      }
+                                    }
+                                  }}
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  Delete
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <EmptyState
+                title="No analyses yet"
+                description="Run an analysis to see results here"
+              />
+            )}
+
+            <Dialog
+              open={!!viewHistoryId}
+              onOpenChange={(open) =>
+                !open &&
+                (setViewHistoryId(null),
+                setHistoryDetail(null),
+                setShowAddToIncident(false))
+              }
+            >
+              {historyDetail && (
+                <>
+                  <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <DialogTitle>
+                            Analysis: {historyDetail.kind} {historyDetail.name}
+                          </DialogTitle>
+                          <DialogDescription className="mt-1">
+                            {historyDetail.namespace &&
+                              `Namespace: ${historyDetail.namespace}`}
+                            {historyDetail.context &&
+                              ` • Context: ${historyDetail.context}`}
+                            {" • "}
+                            {new Date(
+                              historyDetail.created_at,
+                            ).toLocaleString()}
+                          </DialogDescription>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={() =>
+                              handleCreateIncidentFromAnalysis(historyDetail.id)
+                            }
+                            disabled={creatingIncidentFromAnalysis}
+                            size="sm"
+                            variant="outline"
+                          >
+                            {creatingIncidentFromAnalysis
+                              ? "Creating…"
+                              : "Create incident"}
+                          </Button>
+                          <Button
+                            onClick={() =>
+                              setShowAddToIncident(!showAddToIncident)
+                            }
+                            disabled={incidentLoading}
+                            size="sm"
+                            variant="outline"
+                          >
+                            Add to incident
+                          </Button>
+                        </div>
+                      </div>
+                    </DialogHeader>
+                    <div className="mt-4 space-y-4">
+                      {showAddToIncident && (
+                        <div className="rounded-lg border p-4 space-y-2">
+                          <Input
+                            type="text"
+                            placeholder="Search incidents..."
+                            value={addToIncidentSearch}
+                            onChange={(e) =>
+                              setAddToIncidentSearch(e.target.value)
+                            }
+                          />
+                          <div className="max-h-48 overflow-y-auto space-y-1">
+                            {incidentList
+                              .filter(
+                                (inc) =>
+                                  addToIncidentSearch.trim() === "" ||
+                                  inc.title
+                                    .toLowerCase()
+                                    .includes(
+                                      addToIncidentSearch.toLowerCase(),
+                                    ),
+                              )
+                              .map((inc) => (
+                                <Button
+                                  key={inc.id}
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() =>
+                                    handleAddToExistingIncident(
+                                      inc.id,
+                                      "analysis",
+                                      historyDetail.id,
+                                    )
+                                  }
+                                  disabled={incidentLoading}
+                                  className="w-full justify-start text-left"
+                                  size="sm"
+                                >
+                                  {inc.title} ({inc.status})
+                                </Button>
+                              ))}
+                            {incidentList.filter(
+                              (inc) =>
+                                addToIncidentSearch.trim() === "" ||
+                                inc.title
+                                  .toLowerCase()
+                                  .includes(addToIncidentSearch.toLowerCase()),
+                            ).length === 0 && (
+                              <div className="p-2 text-sm text-muted-foreground text-center">
+                                No incidents found
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {historyDetail.error && (
+                        <ErrorAlert message={historyDetail.error} />
+                      )}
+                      {historyDetail.analysis_markdown && (
+                        <div>
+                          <h3 className="text-lg font-semibold mb-2">
+                            Analysis
+                          </h3>
+                          <div className="markdown-body rounded-lg border bg-muted/30 p-4">
+                            <ReactMarkdown>
+                              {historyDetail.analysis_markdown}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+                      {historyDetail.analysis_json && (
+                        <>
+                          {historyDetail.analysis_json.kubectl_commands &&
+                            historyDetail.analysis_json.kubectl_commands
+                              .length > 0 && (
+                              <div>
+                                <div className="flex items-center justify-between mb-2">
+                                  <h3 className="text-lg font-semibold">
+                                    Kubectl Commands
+                                  </h3>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(
+                                        historyDetail.analysis_json!.kubectl_commands!.join(
+                                          "\n",
+                                        ),
+                                      );
+                                    }}
+                                  >
+                                    <Copy className="h-4 w-4 mr-2" />
+                                    Copy All
+                                  </Button>
+                                </div>
+                                <div className="space-y-2">
+                                  {historyDetail.analysis_json.kubectl_commands.map(
+                                    (cmd: string, i: number) => (
+                                      <div
+                                        key={i}
+                                        className="flex items-center justify-between rounded-lg border bg-muted/30 p-3 font-mono text-xs"
+                                      >
+                                        <code>{cmd}</code>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(cmd);
+                                          }}
+                                        >
+                                          <Copy className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                    ),
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                        </>
+                      )}
+                    </div>
+                  </DialogContent>
+                </>
+              )}
+            </Dialog>
+          </>
+        )}
+
+        {tab === "compare" && (
+          <>
+            <PageHeader
+              title="Compare Analyses"
+              subtitle="Select two analyses to compare changes over time"
+            />
+            {compareError && (
+              <ErrorAlert
+                message={compareError}
+                onDismiss={() => setCompareError(null)}
+              />
+            )}
+            {compareResult && (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Compare Results</CardTitle>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setCompareResult(null);
+                        setCompareError(null);
+                      }}
+                    >
+                      ← Back
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <h3 className="text-lg font-semibold mb-2">Analysis A</h3>
+                      <div className="space-y-1">
+                        <p className="text-sm">
+                          <Badge
+                            variant="outline"
+                            className="font-mono text-xs mr-2"
+                          >
+                            {compareResult.analysis_a.kind}
+                          </Badge>
+                          {compareResult.analysis_a.name}
+                          {compareResult.analysis_a.namespace &&
+                            ` (${compareResult.analysis_a.namespace})`}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(
+                            compareResult.analysis_a.created_at,
+                          ).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold mb-2">Analysis B</h3>
+                      <div className="space-y-1">
+                        <p className="text-sm">
+                          <Badge
+                            variant="outline"
+                            className="font-mono text-xs mr-2"
+                          >
+                            {compareResult.analysis_b.kind}
+                          </Badge>
+                          {compareResult.analysis_b.name}
+                          {compareResult.analysis_b.namespace &&
+                            ` (${compareResult.analysis_b.namespace})`}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(
+                            compareResult.analysis_b.created_at,
+                          ).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  {compareResult.likely_reasoning && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-2">
+                        Likely Reasoning
+                      </h3>
+                      <div className="rounded-lg border bg-muted/30 p-4">
+                        <p className="whitespace-pre-wrap text-sm">
+                          {compareResult.likely_reasoning}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  {compareResult.diff_summary && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-2">
+                        Diff Summary
+                      </h3>
+                      <div className="markdown-body rounded-lg border bg-muted/30 p-4">
+                        <ReactMarkdown>
+                          {compareResult.diff_summary}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <h3 className="text-lg font-semibold mb-2">
+                      Kubectl Commands
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-2">
+                          From A (
+                          {compareResult.analysis_a.created_at.slice(0, 10)})
+                        </p>
+                        {(compareResult.analysis_a.kubectl_commands ?? [])
+                          .length > 0 ? (
+                          <Button
+                            variant="outline"
+                            onClick={() =>
+                              copyKubectlCommands(
+                                compareResult.analysis_a.kubectl_commands ?? [],
+                              )
+                            }
+                            className="w-full"
+                          >
+                            <Copy className="h-4 w-4 mr-2" />
+                            Copy{" "}
+                            {
+                              compareResult.analysis_a.kubectl_commands?.length
+                            }{" "}
+                            commands
+                          </Button>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            No commands
+                          </p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-2">
+                          From B (
+                          {compareResult.analysis_b.created_at.slice(0, 10)})
+                        </p>
+                        {(compareResult.analysis_b.kubectl_commands ?? [])
+                          .length > 0 ? (
+                          <Button
+                            variant="outline"
+                            onClick={() =>
+                              copyKubectlCommands(
+                                compareResult.analysis_b.kubectl_commands ?? [],
+                              )
+                            }
+                            className="w-full"
+                          >
+                            <Copy className="h-4 w-4 mr-2" />
+                            Copy{" "}
+                            {
+                              compareResult.analysis_b.kubectl_commands?.length
+                            }{" "}
+                            commands
+                          </Button>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            No commands
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Select Analyses to Compare</CardTitle>
+                <CardDescription>
+                  Select two analyses from the list below and click Compare
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {history.length > 0 ? (
+                  <div className="space-y-2">
+                    {history.slice(0, 15).map((h) => (
+                      <div
+                        key={h.id}
+                        className="flex items-center gap-3 p-3 rounded-lg border hover:bg-muted/50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={compareSelectedIds.includes(h.id)}
+                          onChange={() => toggleCompareSelection(h.id)}
+                          aria-label={`Select ${h.kind} ${h.name} for compare`}
+                          className="h-4 w-4 rounded border-gray-300"
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant="outline"
+                              className="font-mono text-xs"
+                            >
+                              {h.kind}
+                            </Badge>
+                            <span className="font-medium">{h.name}</span>
+                            {h.namespace && (
+                              <span className="text-sm text-muted-foreground">
+                                ({h.namespace})
+                              </span>
+                            )}
+                            {h.error && (
+                              <Badge variant="destructive">Error</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {new Date(h.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setTab("history");
+                              openHistoryDetail(h.id);
+                            }}
+                          >
+                            View
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={async () => {
+                              if (
+                                confirm(
+                                  `Delete analysis for ${h.kind} ${h.name}?`,
+                                )
+                              ) {
+                                try {
+                                  await api.historyDelete(h.id);
+                                  setHistory((prev) =>
+                                    prev.filter((item) => item.id !== h.id),
+                                  );
+                                  setCompareSelectedIds((prev) =>
+                                    prev.filter((id) => id !== h.id),
+                                  );
+                                } catch (e) {
+                                  setError(`Failed to delete: ${e}`);
+                                }
+                              }
+                            }}
+                            className="text-destructive hover:text-destructive"
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                    {compareSelectedIds.length === 2 && (
+                      <Button
+                        onClick={runCompare}
+                        disabled={compareLoading}
+                        className="w-full mt-4"
+                      >
+                        {compareLoading ? "Comparing…" : "Compare Selected"}
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No analyses yet"
+                    description="Run an analysis to see results here"
+                  />
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+      </div>
+    </Layout>
   );
 }
 

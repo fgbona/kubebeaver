@@ -283,6 +283,10 @@ class IncidentRepository:
         try:
             stmt = (
                 select(Incident)
+                .options(
+                    selectinload(Incident.items),
+                    selectinload(Incident.notes),
+                )
                 .order_by(Incident.created_at.desc())
                 .limit(limit)
             )
@@ -297,6 +301,8 @@ class IncidentRepository:
                     "severity": i.severity,
                     "tags": json.loads(i.tags) if i.tags else [],
                     "status": i.status,
+                    "items_count": len(i.items),
+                    "notes_count": len(i.notes),
                 }
                 for i in incidents
             ]
@@ -351,14 +357,21 @@ class IncidentRepository:
             for n in notes:
                 timeline.append({"type": "note", "created_at": n["created_at"], "content": n["content"], "note_id": n["id"]})
             timeline.sort(key=lambda x: x["created_at"])
+            # Get updated_at from latest item/note or created_at
+            updated_at = inc.created_at
+            if timeline:
+                updated_at = max(t["created_at"] for t in timeline)
             return {
                 "id": inc.id,
                 "created_at": inc.created_at,
+                "updated_at": updated_at,
                 "title": inc.title,
                 "description": inc.description,
                 "severity": inc.severity,
                 "tags": json.loads(inc.tags) if inc.tags else [],
                 "status": inc.status,
+                "items_count": len(items),
+                "notes_count": len(notes),
                 "items": items,
                 "notes": notes,
                 "timeline": timeline,
@@ -379,6 +392,39 @@ class IncidentRepository:
         self.session.add(note)
         await self.session.commit()
         return note_id
+
+    async def update_incident(
+        self,
+        incident_id: str,
+        title: str | None = None,
+        description: str | None = None,
+        status: str | None = None,
+        severity: str | None = None,
+        tags: list[str] | None = None,
+    ) -> bool:
+        """Update incident fields. Returns True if updated, False if not found."""
+        try:
+            stmt = select(Incident).where(Incident.id == incident_id)
+            result = await self.session.execute(stmt)
+            incident = result.scalar_one_or_none()
+            if not incident:
+                return False
+            if title is not None:
+                incident.title = title[:500]
+            if description is not None:
+                incident.description = description
+            if status is not None:
+                incident.status = status
+            if severity is not None:
+                incident.severity = severity
+            if tags is not None:
+                incident.tags = json.dumps(tags) if tags else None
+            await self.session.commit()
+            return True
+        except Exception as e:
+            logger.warning("update_incident failed: %s", e)
+            await self.session.rollback()
+            return False
 
     async def delete_incident(self, incident_id: str) -> bool:
         """Delete incident by ID. Returns True if deleted, False if not found."""

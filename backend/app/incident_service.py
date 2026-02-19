@@ -87,6 +87,72 @@ def _ref_summary(item_type: str, ref_id: str, resolved: dict[str, Any] | None) -
     }
 
 
+async def update_incident(
+    incident_id: str,
+    title: str | None = None,
+    description: str | None = None,
+    status: str | None = None,
+    severity: str | None = None,
+    tags: list[str] | None = None,
+) -> bool:
+    """Update incident fields. Returns True if updated, False if not found."""
+    async_session_maker = get_session_maker()
+    async with async_session_maker() as session:
+        repo = IncidentRepository(session)
+        return await repo.update_incident(
+            incident_id=incident_id,
+            title=title,
+            description=description,
+            status=status,
+            severity=severity,
+            tags=tags,
+        )
+
+
+async def create_incident_from_scan(
+    scan_id: str,
+    title: str | None = None,
+    severity: str | None = None,
+) -> dict[str, Any] | None:
+    """Create incident from scan. Returns incident dict or None if scan not found."""
+    scan = await get_scan(scan_id)
+    if not scan:
+        return None
+    # Generate default title if not provided
+    if not title:
+        scope = scan.get("scope", "cluster")
+        namespace = scan.get("namespace") or "cluster"
+        findings_count = scan.get("findings_count", 0)
+        title = f"Scan: {scope} scan in {namespace} ({findings_count} findings)"
+    incident_id = await create_incident(title=title, severity=severity)
+    # Add scan as first item
+    await add_incident_item(incident_id, item_type="scan", ref_id=scan_id)
+    # Return incident with timeline
+    return await get_incident_with_timeline(incident_id)
+
+
+async def create_incident_from_analysis(
+    analysis_id: str,
+    title: str | None = None,
+    severity: str | None = None,
+) -> dict[str, Any] | None:
+    """Create incident from analysis. Returns incident dict or None if analysis not found."""
+    analysis = await get_analysis(analysis_id)
+    if not analysis:
+        return None
+    # Generate default title if not provided
+    if not title:
+        kind = analysis.get("kind", "resource")
+        name = analysis.get("name", "unknown")
+        namespace = analysis.get("namespace") or "default"
+        title = f"Analysis: {kind} {name} in {namespace}"
+    incident_id = await create_incident(title=title, severity=severity)
+    # Add analysis as first item
+    await add_incident_item(incident_id, item_type="analysis", ref_id=analysis_id)
+    # Return incident with timeline
+    return await get_incident_with_timeline(incident_id)
+
+
 async def delete_incident(incident_id: str) -> bool:
     """Delete incident by ID. Returns True if deleted, False if not found."""
     async_session_maker = get_session_maker()
