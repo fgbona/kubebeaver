@@ -158,6 +158,27 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(API_BASE + path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || r.statusText);
+  }
+  return r.json() as Promise<T>;
+}
+
+async function del(path: string): Promise<void> {
+  const r = await fetch(API_BASE + path, { method: "DELETE" });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || r.statusText);
+  }
+}
+
 export const api = {
   health: () => get<HealthResponse>("/health"),
   contexts: () => get<ContextInfo[]>("/contexts"),
@@ -223,6 +244,42 @@ export const api = {
     }
     return r.text();
   },
+
+  schedules: (limit?: number) =>
+    get<ScheduleListItem[]>(
+      "/schedules",
+      limit != null ? { limit: String(limit) } : undefined,
+    ),
+  scheduleGet: (id: string) => get<ScheduleListItem>(`/schedules/${id}`),
+  scheduleCreate: (body: CreateScheduleRequest) =>
+    post<{ id: string }>("/schedules", body),
+  scheduleUpdate: (id: string, body: UpdateScheduleRequest) =>
+    put<ScheduleListItem>(`/schedules/${id}`, body),
+  scheduleDelete: (id: string) => del(`/schedules/${id}`),
+};
+
+export type CreateScheduleRequest = {
+  context?: string;
+  scope: "namespace" | "cluster";
+  namespace?: string;
+  cron: string;
+  enabled?: boolean;
+};
+export type UpdateScheduleRequest = {
+  context?: string;
+  scope?: "namespace" | "cluster";
+  namespace?: string;
+  cron?: string;
+  enabled?: boolean;
+};
+export type ScheduleListItem = {
+  id: string;
+  created_at: string;
+  context: string | null;
+  scope: string;
+  namespace: string | null;
+  cron: string;
+  enabled: boolean;
 };
 
 export type CreateIncidentRequest = {

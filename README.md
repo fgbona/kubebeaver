@@ -26,6 +26,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - **Evidence formatting**: When "Include logs in evidence" is enabled, scan evidence (e.g. `pod_logs`) is **pretty-printed and syntax-highlighted** (jq-style) in the UI for easier debugging
 - **Compare two analyses**: Select two analyses from History and run **Compare** to get a deterministic diff (pod phase, container restarts, lastState, events, analysis summary) and an LLM-generated engineer-friendly explanation; side-by-side metadata and copy kubectl commands from both runs
 - **Incident mode**: Group analyses and scans into **incidents** with a timeline; add notes; export as Markdown or JSON (deterministic, reproducible)
+- **Scheduled scans**: Create **scan schedules** (cron) for namespace or cluster; built-in APScheduler runs scans and stores results (no Redis required). Optional **notifications**: set `WEBHOOK_URL` and/or `SLACK_WEBHOOK_URL` to receive a concise message on critical/high findings (counts, top 3 findings, link to scan when `BASE_URL` is set).
 
 ## Roadmap
 
@@ -45,6 +46,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - ✅ **MySQL/Postgres + Alembic**: Optional external DB with migrations; SQLite remains the default
 - ✅ **Compare two analyses**: Select two from History → Compare; deterministic diff (pod/container/events) + LLM explanation; side-by-side metadata and copy kubectl commands
 - ✅ **Incidents**: Create incidents, add analyses/scans from history, add notes, view timeline, export Markdown/JSON
+- ✅ **Scheduled scans**: CRUD schedules (cron), APScheduler runs scans and stores results; optional webhook/Slack on critical/high
 
 ### Next (v2.0 - Q2 2026)
 
@@ -53,8 +55,8 @@ See [Milestone v2.0.0-alpha], [Milestone v2.0.0-beta], [Milestone v2.0.0-rc] for
 - [ ] **Heuristics Engine**: Additional deterministic checks (current scan covers CrashLoopBackOff, ImagePullBackOff, replica mismatch, node pressure)
 - [x] **Comparison**: Compare two analyses side-by-side (what changed and why) — implemented in Sprint 3
 - [x] **Incidents**: Group analyses/scans into incidents with timeline and export — implemented in Sprint 4
-- [ ] **Scheduled Scans**: Automated health checks (daily/weekly)
-- [ ] **Webhooks**: Slack notifications and generic webhook integrations
+- [x] **Scheduled Scans**: Automated health checks via cron schedules (Sprint 5)
+- [x] **Webhooks**: Optional WEBHOOK_URL and SLACK_WEBHOOK_URL on critical/high findings (Sprint 5)
 - [ ] **Export**: JSON, Markdown, and PDF export for incidents and analyses
 - [ ] **MySQL/Postgres hardening**: Additional migrations and tooling (Alembic and optional MySQL/Postgres are already supported)
 
@@ -253,6 +255,11 @@ With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in 
 - **GET /api/incidents/{id}** – Get incident with timeline (items + notes, sorted by `created_at`).
 - **POST /api/incidents/{id}/export** – Export incident. Body: `{ "format": "markdown"|"json" }`. Returns: Markdown or JSON body (deterministic).
 - **POST /api/incidents/{id}/notes** – Add note. Body: `{ "content": "..." }`. Returns: `{ "id" }`.
+- **POST /api/schedules** – Create schedule. Body: `{ "context?", "scope", "namespace?", "cron", "enabled?" }`. Returns: `{ "id" }`.
+- **GET /api/schedules** – List schedules (`?limit=100`).
+- **GET /api/schedules/{id}** – Get schedule by id.
+- **PUT /api/schedules/{id}** – Update schedule (partial). Body: `{ "context?", "scope?", "namespace?", "cron?", "enabled?" }`.
+- **DELETE /api/schedules/{id}** – Delete schedule (204).
 
 ---
 
@@ -340,6 +347,23 @@ The UI displays metrics in the result header: **"Result - 1,234 tokens - 2.3s"**
    - List: `curl -s http://localhost:8000/api/incidents | jq`.  
    - Get: `curl -s http://localhost:8000/api/incidents/<id> | jq` → `id`, `title`, `timeline[]`, `items[]`, `notes[]`.  
    - Export: `curl -s -X POST http://localhost:8000/api/incidents/<id>/export -H "Content-Type: application/json" -d '{"format":"markdown"}'` → Markdown body.
+
+---
+
+## How to verify (Schedules)
+
+1. **Start the stack** (backend + frontend). Scheduler starts with the app; no Redis required.
+2. **Open Schedules tab:** Click **Schedules** in the header.
+3. **Create schedule:** Choose scope (Namespace or Cluster), select namespace if scope is Namespace, enter cron (e.g. `0 * * * *` for hourly), leave Enabled checked, click **Create schedule**. The new schedule appears in the list.
+4. **Edit/Delete:** Click **Edit** on a schedule to change cron or enabled; **Save** or **Cancel**. Click **Delete** to remove (with confirmation).
+5. **Runs:** At the next cron tick, the backend runs the scan and stores the result (visible under the Scan tab → Recent scans). Failures are logged without crashing the app.
+6. **Notifications (optional):** Set `WEBHOOK_URL` and/or `SLACK_WEBHOOK_URL` and `BASE_URL` in the backend environment. When a scheduled scan has critical or high findings, the backend POSTs a concise message (counts by severity, top 3 findings, link to scan).
+7. **API:**  
+   - Create: `curl -s -X POST http://localhost:8000/api/schedules -H "Content-Type: application/json" -d '{"scope":"namespace","namespace":"default","cron":"0 * * * *"}' | jq` → `{ "id": "..." }`.  
+   - List: `curl -s http://localhost:8000/api/schedules | jq`.  
+   - Get: `curl -s http://localhost:8000/api/schedules/<id> | jq`.  
+   - Update: `curl -s -X PUT http://localhost:8000/api/schedules/<id> -H "Content-Type: application/json" -d '{"enabled":false}' | jq`.  
+   - Delete: `curl -s -o /dev/null -w "%{http_code}" -X DELETE http://localhost:8000/api/schedules/<id>` → 204.
 
 ---
 

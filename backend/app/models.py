@@ -175,3 +175,32 @@ class IncidentDetail(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
     notes: list[dict[str, Any]] = Field(default_factory=list)
     timeline: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# --- Schedules ---
+
+
+class CreateScheduleRequest(BaseModel):
+    context: str | None = None
+    scope: str = "namespace"  # namespace | cluster
+    namespace: str | None = None
+    cron: str = Field(..., min_length=1, max_length=100)  # 5-part cron
+    enabled: bool = True
+
+
+class UpdateScheduleRequest(BaseModel):
+    context: str | None = None
+    scope: str | None = None
+    namespace: str | None = None
+    cron: str | None = None
+    enabled: bool | None = None
+
+
+class ScheduleListItem(BaseModel):
+    id: str
+    created_at: str
+    context: str | None
+    scope: str
+    namespace: str | None
+    cron: str
+    enabled: bool

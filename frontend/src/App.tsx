@@ -10,10 +10,11 @@ import {
   type CompareResponse,
   type IncidentListItem,
   type IncidentDetail,
+  type ScheduleListItem,
 } from "./api";
 
 type Kind = "Pod" | "Deployment" | "StatefulSet" | "Node";
-type Tab = "analyze" | "scan" | "incidents";
+type Tab = "analyze" | "scan" | "incidents" | "schedules";
 
 const SEVERITY_ORDER: Record<string, number> = {
   critical: 4,
@@ -189,6 +190,23 @@ function App() {
   const [addNoteContent, setAddNoteContent] = useState("");
   const [exportLoading, setExportLoading] = useState(false);
 
+  // Schedules
+  const [scheduleList, setScheduleList] = useState<ScheduleListItem[]>([]);
+  const [scheduleCreateContext, setScheduleCreateContext] = useState("");
+  const [scheduleCreateScope, setScheduleCreateScope] = useState<
+    "namespace" | "cluster"
+  >("namespace");
+  const [scheduleCreateNamespace, setScheduleCreateNamespace] = useState("");
+  const [scheduleCreateCron, setScheduleCreateCron] = useState("0 * * * *");
+  const [scheduleCreateEnabled, setScheduleCreateEnabled] = useState(true);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(
+    null,
+  );
+  const [editScheduleCron, setEditScheduleCron] = useState("");
+  const [editScheduleEnabled, setEditScheduleEnabled] = useState(true);
+
   const loadHealth = useCallback(async () => {
     try {
       const h = await api.health();
@@ -353,6 +371,16 @@ function App() {
       setIncidentList([]);
     }
   }, []);
+
+  const loadScheduleList = useCallback(async () => {
+    try {
+      const list = await api.schedules(100);
+      setScheduleList(list);
+    } catch {
+      setScheduleList([]);
+    }
+  }, []);
+
   useEffect(() => {
     if (tab === "scan") loadScanList();
     if (tab === "incidents") {
@@ -360,7 +388,20 @@ function App() {
       loadHistory();
       loadScanList();
     }
-  }, [tab, loadScanList, loadIncidentList, loadHistory]);
+    if (tab === "schedules") {
+      loadScheduleList();
+      loadContexts();
+      loadNamespaces();
+    }
+  }, [
+    tab,
+    loadScanList,
+    loadIncidentList,
+    loadHistory,
+    loadScheduleList,
+    loadContexts,
+    loadNamespaces,
+  ]);
 
   const handleScan = async () => {
     if (scanScope === "namespace" && !scanNamespace.trim()) return;
@@ -479,6 +520,74 @@ function App() {
     }
   };
 
+  const handleScheduleCreate = async () => {
+    if (scheduleCreateScope === "namespace" && !scheduleCreateNamespace.trim())
+      return;
+    if (!scheduleCreateCron.trim()) return;
+    setScheduleLoading(true);
+    setScheduleError(null);
+    try {
+      await api.scheduleCreate({
+        context: scheduleCreateContext.trim() || undefined,
+        scope: scheduleCreateScope,
+        namespace:
+          scheduleCreateScope === "namespace"
+            ? scheduleCreateNamespace.trim()
+            : undefined,
+        cron: scheduleCreateCron.trim(),
+        enabled: scheduleCreateEnabled,
+      });
+      setScheduleCreateContext("");
+      setScheduleCreateNamespace("");
+      setScheduleCreateCron("0 * * * *");
+      setScheduleCreateEnabled(true);
+      await loadScheduleList();
+    } catch (e) {
+      setScheduleError(String(e));
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
+  const startEditSchedule = (s: ScheduleListItem) => {
+    setEditingScheduleId(s.id);
+    setEditScheduleCron(s.cron);
+    setEditScheduleEnabled(s.enabled);
+  };
+
+  const handleScheduleUpdate = async () => {
+    if (!editingScheduleId) return;
+    setScheduleLoading(true);
+    setScheduleError(null);
+    try {
+      await api.scheduleUpdate(editingScheduleId, {
+        cron: editScheduleCron.trim(),
+        enabled: editScheduleEnabled,
+      });
+      setEditingScheduleId(null);
+      await loadScheduleList();
+    } catch (e) {
+      setScheduleError(String(e));
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
+  const handleScheduleDelete = async (id: string) => {
+    if (!confirm("Delete this schedule?")) return;
+    setScheduleLoading(true);
+    setScheduleError(null);
+    try {
+      await api.scheduleDelete(id);
+      if (editingScheduleId === id) setEditingScheduleId(null);
+      await loadScheduleList();
+    } catch (e) {
+      setScheduleError(String(e));
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
   const filteredFindings = (scanResult?.findings ?? []).filter((f) => {
     if (scanFilterSeverity && f.severity !== scanFilterSeverity) return false;
     if (scanFilterCategory && f.category !== scanFilterCategory) return false;
@@ -526,6 +635,13 @@ function App() {
             onClick={() => setTab("incidents")}
           >
             Incidents
+          </button>
+          <button
+            type="button"
+            className={tab === "schedules" ? "primary" : ""}
+            onClick={() => setTab("schedules")}
+          >
+            Schedules
           </button>
         </div>
       </header>
@@ -743,6 +859,192 @@ function App() {
               </div>
             </div>
           )}
+        </>
+      )}
+
+      {tab === "schedules" && (
+        <>
+          <div className="card">
+            <h2 style={{ marginTop: 0 }}>Scheduled scans</h2>
+            <p style={{ color: "var(--muted)", marginTop: 0 }}>
+              Run cluster or namespace scans on a cron schedule. Results are
+              stored like manual scans. Optional: set WEBHOOK_URL or
+              SLACK_WEBHOOK_URL for critical/high findings.
+            </p>
+            {scheduleError && (
+              <div className="error-box" role="alert">
+                {scheduleError}
+              </div>
+            )}
+            <h3 style={{ marginTop: 16 }}>Create schedule</h3>
+            <div className="form-row">
+              {contexts.length > 0 && (
+                <>
+                  <label>Context</label>
+                  <select
+                    value={scheduleCreateContext}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setScheduleCreateContext(v);
+                      if (v) setSelectedContext(v);
+                    }}
+                  >
+                    <option value="">(default)</option>
+                    {contexts.map((c) => (
+                      <option key={c.name} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+              <label>Scope</label>
+              <select
+                value={scheduleCreateScope}
+                onChange={(e) =>
+                  setScheduleCreateScope(
+                    e.target.value as "namespace" | "cluster",
+                  )
+                }
+              >
+                <option value="namespace">Namespace</option>
+                <option value="cluster">Cluster</option>
+              </select>
+              {scheduleCreateScope === "namespace" && (
+                <>
+                  <label>Namespace</label>
+                  <select
+                    value={scheduleCreateNamespace}
+                    onChange={(e) => setScheduleCreateNamespace(e.target.value)}
+                  >
+                    <option value="">Select…</option>
+                    {namespaces.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+              <label>Cron (5 parts)</label>
+              <input
+                type="text"
+                value={scheduleCreateCron}
+                onChange={(e) => setScheduleCreateCron(e.target.value)}
+                placeholder="0 * * * *"
+                style={{ fontFamily: "monospace" }}
+              />
+              <label>
+                <input
+                  type="checkbox"
+                  checked={scheduleCreateEnabled}
+                  onChange={(e) => setScheduleCreateEnabled(e.target.checked)}
+                />{" "}
+                Enabled
+              </label>
+              <span />
+              <button onClick={handleScheduleCreate} disabled={scheduleLoading}>
+                {scheduleLoading ? "Creating…" : "Create schedule"}
+              </button>
+            </div>
+            <h3 style={{ marginTop: 24 }}>Schedules</h3>
+            {scheduleList.length === 0 ? (
+              <p style={{ color: "var(--muted)" }}>
+                No schedules yet. Create one above.
+              </p>
+            ) : (
+              <ul style={{ listStyle: "none", padding: 0 }}>
+                {scheduleList.map((s) => (
+                  <li
+                    key={s.id}
+                    style={{
+                      padding: "10px 12px",
+                      marginBottom: 8,
+                      background: "var(--bg-secondary)",
+                      borderRadius: 8,
+                      display: "flex",
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                      gap: 12,
+                    }}
+                  >
+                    {editingScheduleId === s.id ? (
+                      <>
+                        <input
+                          type="text"
+                          value={editScheduleCron}
+                          onChange={(e) => setEditScheduleCron(e.target.value)}
+                          placeholder="0 * * * *"
+                          style={{ fontFamily: "monospace", width: 120 }}
+                        />
+                        <label
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={editScheduleEnabled}
+                            onChange={(e) =>
+                              setEditScheduleEnabled(e.target.checked)
+                            }
+                          />
+                          Enabled
+                        </label>
+                        <button
+                          onClick={handleScheduleUpdate}
+                          disabled={scheduleLoading}
+                        >
+                          Save
+                        </button>
+                        <button onClick={() => setEditingScheduleId(null)}>
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <code
+                          style={{
+                            background: "var(--bg)",
+                            padding: "2px 6px",
+                            borderRadius: 4,
+                          }}
+                        >
+                          {s.cron}
+                        </code>
+                        <span>
+                          {s.scope === "cluster"
+                            ? "cluster"
+                            : s.namespace || "—"}
+                        </span>
+                        {s.context && <span title="context">{s.context}</span>}
+                        <span
+                          style={{
+                            color: s.enabled
+                              ? "var(--success)"
+                              : "var(--muted)",
+                          }}
+                        >
+                          {s.enabled ? "On" : "Off"}
+                        </span>
+                        <button onClick={() => startEditSchedule(s)}>
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleScheduleDelete(s.id)}
+                          disabled={scheduleLoading}
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </>
       )}
 

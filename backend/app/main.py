@@ -9,13 +9,17 @@ from app.routers.api import router
 from app.history import init_db
 from app.cache import close as cache_close
 from app.db.factory import close_database
+from app.scheduler import start_scheduler, stop_scheduler, reload_scheduler_jobs_async
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging("INFO")
     await init_db()
+    start_scheduler()
+    await reload_scheduler_jobs_async()
     yield
+    stop_scheduler()
     await cache_close()
     await close_database()
 

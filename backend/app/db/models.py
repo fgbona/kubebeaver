@@ -124,3 +124,17 @@ class IncidentNote(Base):
     created_at: Mapped[str] = mapped_column(String(30), nullable=False)
 
     incident: Mapped["Incident"] = relationship("Incident", back_populates="notes")
+
+
+class ScanSchedule(Base):
+    """Scheduled scan (cron)."""
+
+    __tablename__ = "scan_schedules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    created_at: Mapped[str] = mapped_column(String(30), nullable=False)
+    context: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)  # namespace | cluster
+    namespace: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cron: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g. "0 * * * *" (hourly)
+    enabled: Mapped[bool] = mapped_column(nullable=False, server_default="1")
