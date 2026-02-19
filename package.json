@@ -7,14 +7,12 @@
     "type": "git",
     "url": "https://github.com/fgbona/kubebeaver"
   },
-  "scripts": {
-    "build": "vite build",
-    "release:notes": "node scripts/extract-release-notes.js",
-    "version:current": "node scripts/version.js",
-    "pr": "/usr/local/bin/pr",
-    "ship": "/usr/local/bin/release",
-    "release": "standard-version"
-  },
+   "scripts": {
+     "build": "vite build",
+     "pr": "/usr/local/bin/pr",
+     "ship": "/usr/local/bin/release",
+     "release": "standard-version"
+   },
   "devDependencies": {
     "standard-version": "^9.5.0"
   }
