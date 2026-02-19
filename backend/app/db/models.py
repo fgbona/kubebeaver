@@ -80,3 +80,47 @@ class ScanFinding(Base):
     occurred_at: Mapped[str | None] = mapped_column(String(40), nullable=True)  # When the issue happened (ISO)
 
     scan_run: Mapped["ScanRun"] = relationship("ScanRun", back_populates="findings")
+
+
+class Incident(Base):
+    """Incident container for grouping analyses and scans with notes."""
+
+    __tablename__ = "incidents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    created_at: Mapped[str] = mapped_column(String(30), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    severity: Mapped[str | None] = mapped_column(String(20), nullable=True)  # low|medium|high|critical
+    tags: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of strings
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="open")
+
+    items: Mapped[list["IncidentItem"]] = relationship("IncidentItem", back_populates="incident", cascade="all, delete-orphan")
+    notes: Mapped[list["IncidentNote"]] = relationship("IncidentNote", back_populates="incident", cascade="all, delete-orphan")
+
+
+class IncidentItem(Base):
+    """Link from an incident to an analysis or scan."""
+
+    __tablename__ = "incident_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    incident_id: Mapped[str] = mapped_column(String(36), ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False)
+    item_type: Mapped[str] = mapped_column(String(20), nullable=False)  # analysis | scan
+    ref_id: Mapped[str] = mapped_column(String(36), nullable=False)  # analysis id or scan_run id
+    created_at: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    incident: Mapped["Incident"] = relationship("Incident", back_populates="items")
+
+
+class IncidentNote(Base):
+    """Note or status update on an incident."""
+
+    __tablename__ = "incident_notes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    incident_id: Mapped[str] = mapped_column(String(36), ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    incident: Mapped["Incident"] = relationship("Incident", back_populates="notes")

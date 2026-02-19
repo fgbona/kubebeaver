@@ -194,4 +194,69 @@ export const api = {
       limit != null ? { limit: String(limit) } : undefined,
     ),
   scanGet: (id: string) => get<ScanDetail>(`/scans/${id}`),
+
+  // Incidents
+  incidents: (limit?: number) =>
+    get<IncidentListItem[]>(
+      "/incidents",
+      limit != null ? { limit: String(limit) } : undefined,
+    ),
+  incidentGet: (id: string) => get<IncidentDetail>(`/incidents/${id}`),
+  incidentCreate: (body: CreateIncidentRequest) =>
+    post<{ id: string }>("/incidents", body),
+  incidentAddItem: (incidentId: string, body: AddIncidentItemRequest) =>
+    post<{ id: string }>(`/incidents/${incidentId}/add`, body),
+  incidentAddNote: (incidentId: string, content: string) =>
+    post<{ id: string }>(`/incidents/${incidentId}/notes`, { content }),
+  incidentExport: async (
+    incidentId: string,
+    format: "markdown" | "json",
+  ): Promise<string> => {
+    const r = await fetch(API_BASE + `/incidents/${incidentId}/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format }),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(t || r.statusText);
+    }
+    return r.text();
+  },
+};
+
+export type CreateIncidentRequest = {
+  title: string;
+  description?: string;
+  severity?: string;
+  tags?: string[];
+};
+export type AddIncidentItemRequest = {
+  type: "analysis" | "scan";
+  ref_id: string;
+};
+export type IncidentListItem = {
+  id: string;
+  created_at: string;
+  title: string;
+  description: string | null;
+  severity: string | null;
+  tags: string[];
+  status: string;
+};
+export type IncidentDetail = IncidentListItem & {
+  items: {
+    id: string;
+    item_type: string;
+    ref_id: string;
+    created_at: string;
+  }[];
+  notes: { id: string; content: string; created_at: string }[];
+  timeline: {
+    type: string;
+    created_at?: string;
+    item_type?: string;
+    ref_id?: string;
+    content?: string;
+  }[];
 };

@@ -25,6 +25,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - **Cluster health scan**: On-demand namespace or cluster-wide scan for failure signals (failing pods, replica mismatches, node pressure) with prioritized findings, **colored severity** (Critical/High/Medium/Low/Info), **per-finding timestamps** (when the issue occurred), and suggested kubectl commands
 - **Evidence formatting**: When "Include logs in evidence" is enabled, scan evidence (e.g. `pod_logs`) is **pretty-printed and syntax-highlighted** (jq-style) in the UI for easier debugging
 - **Compare two analyses**: Select two analyses from History and run **Compare** to get a deterministic diff (pod phase, container restarts, lastState, events, analysis summary) and an LLM-generated engineer-friendly explanation; side-by-side metadata and copy kubectl commands from both runs
+- **Incident mode**: Group analyses and scans into **incidents** with a timeline; add notes; export as Markdown or JSON (deterministic, reproducible)
 
 ## Roadmap
 
@@ -43,6 +44,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - ✅ **jq-style JSON highlighting** for Raw evidence (Analyze) and Evidence (Scan), with pretty-printing when evidence includes logs
 - ✅ **MySQL/Postgres + Alembic**: Optional external DB with migrations; SQLite remains the default
 - ✅ **Compare two analyses**: Select two from History → Compare; deterministic diff (pod/container/events) + LLM explanation; side-by-side metadata and copy kubectl commands
+- ✅ **Incidents**: Create incidents, add analyses/scans from history, add notes, view timeline, export Markdown/JSON
 
 ### Next (v2.0 - Q2 2026)
 
@@ -50,7 +52,7 @@ See [Milestone v2.0.0-alpha], [Milestone v2.0.0-beta], [Milestone v2.0.0-rc] for
 
 - [ ] **Heuristics Engine**: Additional deterministic checks (current scan covers CrashLoopBackOff, ImagePullBackOff, replica mismatch, node pressure)
 - [x] **Comparison**: Compare two analyses side-by-side (what changed and why) — implemented in Sprint 3
-- [ ] **Incidents**: Group analyses into incidents with timeline and export
+- [x] **Incidents**: Group analyses/scans into incidents with timeline and export — implemented in Sprint 4
 - [ ] **Scheduled Scans**: Automated health checks (daily/weekly)
 - [ ] **Webhooks**: Slack notifications and generic webhook integrations
 - [ ] **Export**: JSON, Markdown, and PDF export for incidents and analyses
@@ -79,7 +81,7 @@ Releases use [standard-version](https://github.com/conventional-changelog/standa
 | `refactor:` | Code Refactoring  | `refactor: simplify scanner` |
 | `perf:`  | Performance         | `perf: cache namespace list` |
 
-Works for both Node (frontend) and Python (backend). When you run the release script (e.g. `release` or `release patch`), it runs `standard-version`, which bumps the version and updates `CHANGELOG.md` from these commits; the script then pushes the tag and creates the GitHub release using the new version’s notes from the changelog. Run `npm install` in the repo root so the devDependency `standard-version` is available.
+Works for both Node (frontend) and Python (backend). When you run the release script (e.g. `release` or `release patch`), it runs `standard-version`, which bumps the version and updates `CHANGELOG.md` from these commits; the script then pushes the tag and creates the GitHub release. To use only the current version's notes as the release body, run `npm run release:notes` and pass the output to your release tool (e.g. `gh release create v$(node -p "require('./package.json').version") --notes-file <(npm run release:notes --silent)`). Run `npm install` in the repo root so the devDependency `standard-version` is available.
 
 ## Repository layout
 
@@ -226,6 +228,12 @@ With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in 
 - **POST /api/scan** – Run cluster health scan. Body: `{ "context?", "scope": "namespace"|"cluster", "namespace?" (required when scope=namespace), "include_logs?" }`. Returns: `id`, `created_at`, `summary_markdown`, `error?`, `findings[]`, `counts` (by severity), `duration_ms?`.
 - **GET /api/scans** – List recent scans (`?limit=50`).
 - **GET /api/scans/{id}** – Get scan by id with full findings and summary. Each finding includes `occurred_at?` (ISO timestamp when the issue happened, from pod/node evidence) when available.
+- **POST /api/incidents** – Create incident. Body: `{ "title", "description?", "severity?", "tags?" }`. Returns: `{ "id" }`.
+- **POST /api/incidents/{id}/add** – Add analysis or scan to incident. Body: `{ "type": "analysis"|"scan", "ref_id": "<analysis_id|scan_id>" }`. Returns: `{ "id" }`.
+- **GET /api/incidents** – List incidents (`?limit=50`).
+- **GET /api/incidents/{id}** – Get incident with timeline (items + notes, sorted by `created_at`).
+- **POST /api/incidents/{id}/export** – Export incident. Body: `{ "format": "markdown"|"json" }`. Returns: Markdown or JSON body (deterministic).
+- **POST /api/incidents/{id}/notes** – Add note. Body: `{ "content": "..." }`. Returns: `{ "id" }`.
 
 ---
 
@@ -296,6 +304,23 @@ The UI displays metrics in the result header: **"Result - 1,234 tokens - 2.3s"**
 3. **Select two analyses** using the checkboxes (first selection = A, second = B).
 4. **Click "Compare selected"**. The compare panel shows side-by-side metadata (Analysis A vs B), **Likely reasoning** (LLM), **Diff summary** (markdown), and **Copy kubectl commands** (from A and from B).
 5. **API:** `curl -s -X POST http://localhost:8000/api/compare -H "Content-Type: application/json" -d '{"analysis_id_a":"<id1>","analysis_id_b":"<id2>"}' | jq`. Expect `diff_summary`, `changes[]`, `likely_reasoning`, `analysis_a`, `analysis_b`.
+
+---
+
+## How to verify (Incidents)
+
+1. **Start the stack** and ensure you have at least one analysis or scan in history.
+2. **Open Incidents tab:** Click **Incidents** in the header.
+3. **Create incident:** Enter a title (e.g. "Production pod crash"), optional description and severity, click **Create incident**. The new incident is selected and the detail panel appears.
+4. **Add from history:** In "Add from history", choose **Analysis** or **Scan**, select an item from the dropdown, click **Add**. The timeline updates with the new item.
+5. **Add note:** Type a note (e.g. "Mitigated by scaling") and click **Add note**. Timeline shows the note.
+6. **Export:** Click **Export Markdown** or **Export JSON**. A file downloads (e.g. `incident-<id-prefix>.md` or `.json`). Markdown contains title, description, severity, and a chronological timeline; JSON has the same structure in machine-readable form.
+7. **API:**  
+   - Create: `curl -s -X POST http://localhost:8000/api/incidents -H "Content-Type: application/json" -d '{"title":"Test"}' | jq` → `{ "id": "..." }`.  
+   - Add item: `curl -s -X POST http://localhost:8000/api/incidents/<id>/add -H "Content-Type: application/json" -d '{"type":"analysis","ref_id":"<analysis_id>"}' | jq`.  
+   - List: `curl -s http://localhost:8000/api/incidents | jq`.  
+   - Get: `curl -s http://localhost:8000/api/incidents/<id> | jq` → `id`, `title`, `timeline[]`, `items[]`, `notes[]`.  
+   - Export: `curl -s -X POST http://localhost:8000/api/incidents/<id>/export -H "Content-Type: application/json" -d '{"format":"markdown"}'` → Markdown body.
 
 ---
 

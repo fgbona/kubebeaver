@@ -3,6 +3,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 
 from app.config import settings
 from app.models import (
@@ -20,12 +21,25 @@ from app.models import (
     CompareRequest,
     CompareResponse,
     CompareChangeItem,
+    CreateIncidentRequest,
+    AddIncidentItemRequest,
+    ExportIncidentRequest,
+    IncidentListItem,
+    IncidentDetail,
 )
 from app.k8s_client import list_contexts, list_namespaces, list_resources, check_connection
 from app.analyzer import run_analysis
 from app.history import save_analysis, list_analyses, get_analysis, init_db
 from app.scan_service import execute_and_save_scan, list_scans as list_scans_svc, get_scan as get_scan_svc
 from app.compare_service import run_compare
+from app.incident_service import (
+    create_incident,
+    add_incident_item,
+    add_incident_note,
+    list_incidents,
+    get_incident_with_timeline,
+    export_incident,
+)
 from app.llm import get_llm_provider
 from app.cache import cache_key, get as cache_get, set as cache_set
 
@@ -276,3 +290,59 @@ async def scan_get(scan_id: str) -> dict[str, Any]:
     if not row:
         raise HTTPException(status_code=404, detail="Scan not found")
     return row
+
+
+# --- Incidents ---
+
+
+@router.post("/incidents", status_code=201)
+async def incidents_create(req: CreateIncidentRequest) -> dict[str, str]:
+    incident_id = await create_incident(
+        title=req.title,
+        description=req.description,
+        severity=req.severity,
+        tags=req.tags or None,
+    )
+    return {"id": incident_id}
+
+
+@router.post("/incidents/{incident_id}/add", status_code=201)
+async def incidents_add_item(incident_id: str, req: AddIncidentItemRequest) -> dict[str, Any]:
+    item_id = await add_incident_item(incident_id, item_type=req.type, ref_id=req.ref_id)
+    if item_id is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {"id": item_id}
+
+
+@router.get("/incidents", response_model=list[IncidentListItem])
+async def incidents_list(limit: int = 50) -> list[IncidentListItem]:
+    items = await list_incidents(limit=limit)
+    return [IncidentListItem(**r) for r in items]
+
+
+@router.get("/incidents/{incident_id}", response_model=IncidentDetail)
+async def incidents_get(incident_id: str) -> IncidentDetail:
+    row = await get_incident_with_timeline(incident_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return IncidentDetail(**row)
+
+
+@router.post("/incidents/{incident_id}/export")
+async def incidents_export(incident_id: str, req: ExportIncidentRequest) -> Response:
+    result = await export_incident(incident_id, fmt=req.format)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    content, media_type = result
+    return Response(content=content, media_type=media_type)
+
+
+@router.post("/incidents/{incident_id}/notes", status_code=201)
+async def incidents_add_note(incident_id: str, body: dict[str, Any]) -> dict[str, str]:
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="content required")
+    note_id = await add_incident_note(incident_id, content=content)
+    if note_id is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {"id": note_id}
