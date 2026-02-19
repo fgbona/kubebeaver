@@ -1,18 +1,18 @@
 {
   "name": "kubebeaver",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": true,
   "description": "Kubernetes troubleshooting assistant - collects cluster signals and uses an LLM for diagnostics",
   "repository": {
     "type": "git",
     "url": "https://github.com/fgbona/kubebeaver"
   },
-   "scripts": {
-     "build": "vite build",
-     "pr": "/usr/local/bin/pr",
-     "ship": "/usr/local/bin/release",
-     "release": "standard-version"
-   },
+  "scripts": {
+    "build": "vite build",
+    "pr": "/usr/local/bin/pr",
+    "ship": "/usr/local/bin/release",
+    "release": "standard-version"
+  },
   "devDependencies": {
     "standard-version": "^9.5.0"
   }
