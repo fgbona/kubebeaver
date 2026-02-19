@@ -1,4 +1,5 @@
 """API routes for KubeBeaver."""
+import json
 import logging
 from typing import Any
 
@@ -221,6 +222,26 @@ async def history_get(analysis_id: str) -> dict[str, Any]:
     if not row:
         raise HTTPException(status_code=404, detail="Analysis not found")
     return row
+
+
+@router.get("/analysis/{analysis_id}/explain")
+async def analysis_explain(analysis_id: str) -> dict[str, Any]:
+    """Return explainability slice for an analysis: heuristics, why, uncertain."""
+    row = await get_analysis(analysis_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    aj = row.get("analysis_json") or {}
+    if isinstance(aj, str):
+        try:
+            aj = json.loads(aj)
+        except json.JSONDecodeError:
+            aj = {}
+    return {
+        "analysis_id": analysis_id,
+        "heuristics": aj.get("heuristics", []),
+        "why": aj.get("why", []),
+        "uncertain": aj.get("uncertain", []),
+    }
 
 
 @router.post("/compare", response_model=CompareResponse)

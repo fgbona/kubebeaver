@@ -1,5 +1,6 @@
 """LLM prompt construction for Kubernetes troubleshooting."""
 import json
+from typing import Any
 
 
 SYSTEM_ROLE = """You are an expert SRE/DevOps engineer specializing in Kubernetes troubleshooting.
@@ -9,7 +10,8 @@ Rules:
 - Use evidence_refs to point to specific keys in the evidence (e.g. pod.status.containerStatuses[0].state).
 - Be concise but actionable.
 - If critical data is missing, say so in follow_up_questions.
-- For risk_notes, mention any risks (data loss, impact, downtime) if relevant."""
+- For risk_notes, mention any risks (data loss, impact, downtime) if relevant.
+- When heuristic candidates are provided, confirm or refute them with evidence; you may add other root causes not in the list."""
 
 OUTPUT_SCHEMA = """
 Respond with a single JSON object (no markdown code fence, no extra text) with exactly these keys:
@@ -19,15 +21,28 @@ Respond with a single JSON object (no markdown code fence, no extra text) with e
 - kubectl_commands (array of strings: suggested commands to validate or fix)
 - follow_up_questions (array of strings: if more data would help)
 - risk_notes (array of strings: e.g. data loss risk, impact)
+- why (array of { ref: string, explanation: string }): for each evidence_ref you cite in likely_root_causes, add one entry mapping that ref to a short explanation of why it supports or refutes a cause)
+- uncertain (array of strings): what is still unclear or needs follow-up (e.g. "Exit code not in evidence", "Need to check image tag")
 """
 
 
-def build_prompt(evidence: dict, target_kind: str, target_name: str, target_namespace: str | None) -> str:
+def build_prompt(
+    evidence: dict,
+    target_kind: str,
+    target_name: str,
+    target_namespace: str | None,
+    heuristic_conditions: list[dict[str, Any]] | None = None,
+) -> str:
     target_ns = target_namespace or ""
     evidence_str = json.dumps(evidence, indent=2, default=str)
+    heuristic_block = ""
+    if heuristic_conditions:
+        heuristic_block = "\nHEURISTIC CANDIDATES (from evidence; confirm or refute with evidence):\n"
+        heuristic_block += json.dumps(heuristic_conditions, indent=2)
+        heuristic_block += "\n\n"
     return f"""Analyze the following Kubernetes troubleshooting evidence for {target_kind} "{target_name}" (namespace: {target_ns or 'N/A'}).
 
-{OUTPUT_SCHEMA}
+{heuristic_block}{OUTPUT_SCHEMA}
 
 EVIDENCE (JSON):
 {evidence_str}

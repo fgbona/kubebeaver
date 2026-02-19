@@ -141,10 +141,14 @@ function App() {
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [explainOpen, setExplainOpen] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [viewHistoryId, setViewHistoryId] = useState<string | null>(null);
   const [historyDetail, setHistoryDetail] = useState<
-    | (HistoryItem & { analysis_markdown?: string; analysis_json?: unknown })
+    | (HistoryItem & {
+        analysis_markdown?: string;
+        analysis_json?: import("./api").AnalysisJson;
+      })
     | null
   >(null);
   const [compareSelectedIds, setCompareSelectedIds] = useState<string[]>([]);
@@ -1538,6 +1542,87 @@ function App() {
                   </div>
                 )}
               </div>
+              {(result.analysis_json?.heuristics?.length ||
+                result.analysis_json?.why?.length ||
+                result.analysis_json?.uncertain?.length ||
+                (result.analysis_json?.follow_up_questions?.length ?? 0) >
+                  0) && (
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="toggle-header"
+                    onClick={() => setExplainOpen(!explainOpen)}
+                  >
+                    {explainOpen ? "▼" : "▶"} Explain reasoning
+                  </button>
+                  {explainOpen && (
+                    <div className="evidence-block" style={{ padding: 12 }}>
+                      {result.analysis_json.heuristics?.length ? (
+                        <section style={{ marginBottom: 16 }}>
+                          <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
+                            Heuristic signals
+                          </h4>
+                          <ul style={{ margin: 0, paddingLeft: 20 }}>
+                            {result.analysis_json.heuristics.map((h, i) => (
+                              <li key={i}>
+                                <strong>{h.condition}</strong>{" "}
+                                {h.evidence_refs?.length
+                                  ? `(${h.evidence_refs.join(", ")})`
+                                  : ""}
+                                <ul
+                                  style={{ margin: "4px 0 0", paddingLeft: 16 }}
+                                >
+                                  {h.candidates?.map((c, j) => (
+                                    <li key={j}>
+                                      {c.cause} ({c.confidence})
+                                    </li>
+                                  ))}
+                                </ul>
+                              </li>
+                            ))}
+                          </ul>
+                        </section>
+                      ) : null}
+                      {result.analysis_json.why?.length ? (
+                        <section style={{ marginBottom: 16 }}>
+                          <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
+                            Evidence mapping
+                          </h4>
+                          <ul style={{ margin: 0, paddingLeft: 20 }}>
+                            {result.analysis_json.why.map((w, i) => (
+                              <li key={i}>
+                                <code style={{ fontSize: 12 }}>{w.ref}</code>:{" "}
+                                {w.explanation}
+                              </li>
+                            ))}
+                          </ul>
+                        </section>
+                      ) : null}
+                      {(result.analysis_json.uncertain?.length ||
+                        (result.analysis_json.follow_up_questions?.length ??
+                          0) > 0) && (
+                        <section>
+                          <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
+                            Uncertain / follow-up questions
+                          </h4>
+                          <ul style={{ margin: 0, paddingLeft: 20 }}>
+                            {(result.analysis_json.uncertain ?? []).map(
+                              (u, i) => (
+                                <li key={`u-${i}`}>{u}</li>
+                              ),
+                            )}
+                            {(
+                              result.analysis_json.follow_up_questions ?? []
+                            ).map((q, i) => (
+                              <li key={`q-${i}`}>{q}</li>
+                            ))}
+                          </ul>
+                        </section>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1697,6 +1782,101 @@ function App() {
                       </ReactMarkdown>
                     </div>
                   )}
+                  {historyDetail.analysis_json &&
+                    (historyDetail.analysis_json.heuristics?.length ||
+                      historyDetail.analysis_json.why?.length ||
+                      historyDetail.analysis_json.uncertain?.length ||
+                      (historyDetail.analysis_json.follow_up_questions
+                        ?.length ?? 0) > 0) && (
+                      <div style={{ marginTop: 12 }}>
+                        <button
+                          type="button"
+                          className="toggle-header"
+                          onClick={() => setExplainOpen(!explainOpen)}
+                        >
+                          {explainOpen ? "▼" : "▶"} Explain reasoning
+                        </button>
+                        {explainOpen && (
+                          <div
+                            className="evidence-block"
+                            style={{ padding: 12 }}
+                          >
+                            {historyDetail.analysis_json.heuristics?.length ? (
+                              <section style={{ marginBottom: 16 }}>
+                                <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
+                                  Heuristic signals
+                                </h4>
+                                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                  {historyDetail.analysis_json.heuristics.map(
+                                    (h, i) => (
+                                      <li key={i}>
+                                        <strong>{h.condition}</strong>{" "}
+                                        {h.evidence_refs?.length
+                                          ? `(${h.evidence_refs.join(", ")})`
+                                          : ""}
+                                        <ul
+                                          style={{
+                                            margin: "4px 0 0",
+                                            paddingLeft: 16,
+                                          }}
+                                        >
+                                          {h.candidates?.map((c, j) => (
+                                            <li key={j}>
+                                              {c.cause} ({c.confidence})
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </li>
+                                    ),
+                                  )}
+                                </ul>
+                              </section>
+                            ) : null}
+                            {historyDetail.analysis_json.why?.length ? (
+                              <section style={{ marginBottom: 16 }}>
+                                <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
+                                  Evidence mapping
+                                </h4>
+                                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                  {historyDetail.analysis_json.why.map(
+                                    (w, i) => (
+                                      <li key={i}>
+                                        <code style={{ fontSize: 12 }}>
+                                          {w.ref}
+                                        </code>
+                                        : {w.explanation}
+                                      </li>
+                                    ),
+                                  )}
+                                </ul>
+                              </section>
+                            ) : null}
+                            {(historyDetail.analysis_json.uncertain?.length ||
+                              (historyDetail.analysis_json.follow_up_questions
+                                ?.length ?? 0) > 0) && (
+                              <section>
+                                <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>
+                                  Uncertain / follow-up questions
+                                </h4>
+                                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                  {(
+                                    historyDetail.analysis_json.uncertain ?? []
+                                  ).map((u, i) => (
+                                    <li key={`u-${i}`}>{u}</li>
+                                  ))}
+                                  {(
+                                    historyDetail.analysis_json
+                                      .follow_up_questions ?? []
+                                  ).map((q, i) => (
+                                    <li key={`q-${i}`}>{q}</li>
+                                  ))}
+                                </ul>
+                              </section>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   {historyDetail.error && (
                     <div className="error-box">{historyDetail.error}</div>
                   )}

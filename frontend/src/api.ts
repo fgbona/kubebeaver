@@ -18,6 +18,17 @@ export type RootCauseItem = {
   confidence: string;
   evidence_refs: string[];
 };
+export type HeuristicCandidateItem = {
+  cause: string;
+  confidence: string;
+  evidence_refs: string[];
+};
+export type HeuristicConditionItem = {
+  condition: string;
+  evidence_refs: string[];
+  candidates: HeuristicCandidateItem[];
+};
+export type WhyItem = { ref: string; explanation: string };
 export type AnalysisJson = {
   summary: string;
   likely_root_causes: RootCauseItem[];
@@ -25,6 +36,9 @@ export type AnalysisJson = {
   kubectl_commands: string[];
   follow_up_questions: string[];
   risk_notes: string[];
+  heuristics?: HeuristicConditionItem[];
+  why?: WhyItem[];
+  uncertain?: string[];
 };
 export type TruncationReport = {
   truncated: boolean;
@@ -206,6 +220,13 @@ export const api = {
         evidence_summary?: string;
       }
     >(`/history/${id}`),
+  analysisExplain: (analysisId: string) =>
+    get<{
+      analysis_id: string;
+      heuristics: HeuristicConditionItem[];
+      why: WhyItem[];
+      uncertain: string[];
+    }>(`/analysis/${analysisId}/explain`),
   compare: (body: { analysis_id_a: string; analysis_id_b: string }) =>
     post<CompareResponse>("/compare", body),
   scan: (body: ScanRequest) => post<ScanResponse>("/scan", body),

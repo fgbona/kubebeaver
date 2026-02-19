@@ -28,6 +28,25 @@ class RootCauseItem(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
 
 
+class HeuristicCandidateItem(BaseModel):
+    cause: str
+    confidence: str
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class HeuristicConditionItem(BaseModel):
+    """One detected condition with deterministic root-cause candidates."""
+    condition: str
+    evidence_refs: list[str] = Field(default_factory=list)
+    candidates: list[HeuristicCandidateItem] = Field(default_factory=list)
+
+
+class WhyItem(BaseModel):
+    """Evidence ref -> short explanation (why this supports or refutes a cause)."""
+    ref: str
+    explanation: str
+
+
 class AnalysisJson(BaseModel):
     summary: str = ""
     likely_root_causes: list[RootCauseItem] = Field(default_factory=list)
@@ -35,6 +54,10 @@ class AnalysisJson(BaseModel):
     kubectl_commands: list[str] = Field(default_factory=list)
     follow_up_questions: list[str] = Field(default_factory=list)
     risk_notes: list[str] = Field(default_factory=list)
+    # Explainability (Sprint 6)
+    heuristics: list[HeuristicConditionItem] = Field(default_factory=list)
+    why: list[WhyItem] = Field(default_factory=list)
+    uncertain: list[str] = Field(default_factory=list)
 
 
 class TruncationReport(BaseModel):
