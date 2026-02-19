@@ -6,11 +6,19 @@ import time
 from typing import Any
 
 from app.config import settings
-from app.models import AnalysisJson, RootCauseItem, TruncationReport
+from app.models import (
+    AnalysisJson,
+    RootCauseItem,
+    TruncationReport,
+    HeuristicConditionItem,
+    HeuristicCandidateItem,
+    WhyItem,
+)
 from app.collectors import collect_evidence
 from app.sanitize import sanitize_evidence, truncate_evidence_for_llm
 from app.llm import get_llm_provider
 from app.prompt import SYSTEM_ROLE, build_prompt
+from app.heuristics import compute_heuristics
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +97,7 @@ async def run_analysis(
         total_chars_after=trunc_report_dict.get("total_chars_after", 0),
     )
 
+    heuristic_conditions = compute_heuristics(evidence_clean)
     full_prompt = (
         SYSTEM_ROLE
         + "\n\n"
@@ -97,6 +106,7 @@ async def run_analysis(
             kind,
             name,
             namespace,
+            heuristic_conditions=heuristic_conditions if heuristic_conditions else None,
         )
     )
     provider = get_llm_provider()
@@ -126,6 +136,8 @@ async def run_analysis(
             "kubectl_commands": [],
             "follow_up_questions": [],
             "risk_notes": [],
+            "why": [],
+            "uncertain": [],
         }
 
     root_causes = [
@@ -136,6 +148,26 @@ async def run_analysis(
         )
         for p in parsed.get("likely_root_causes") or []
     ]
+    why_list = [
+        WhyItem(ref=w.get("ref", ""), explanation=w.get("explanation", ""))
+        for w in parsed.get("why") or []
+        if isinstance(w, dict) and w.get("ref")
+    ]
+    heuristics_models = [
+        HeuristicConditionItem(
+            condition=h.get("condition", ""),
+            evidence_refs=h.get("evidence_refs") or [],
+            candidates=[
+                HeuristicCandidateItem(
+                    cause=c.get("cause", ""),
+                    confidence=c.get("confidence", "medium"),
+                    evidence_refs=c.get("evidence_refs") or [],
+                )
+                for c in h.get("candidates") or []
+            ],
+        )
+        for h in heuristic_conditions
+    ]
     analysis_json = AnalysisJson(
         summary=parsed.get("summary", ""),
         likely_root_causes=root_causes,
@@ -143,6 +175,9 @@ async def run_analysis(
         kubectl_commands=parsed.get("kubectl_commands") or [],
         follow_up_questions=parsed.get("follow_up_questions") or [],
         risk_notes=parsed.get("risk_notes") or [],
+        heuristics=heuristics_models,
+        why=why_list,
+        uncertain=parsed.get("uncertain") or [],
     )
     analysis_dict = analysis_json.model_dump()
     markdown = _json_to_markdown(analysis_json)

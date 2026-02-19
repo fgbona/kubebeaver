@@ -27,6 +27,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - **Compare two analyses**: Select two analyses from History and run **Compare** to get a deterministic diff (pod phase, container restarts, lastState, events, analysis summary) and an LLM-generated engineer-friendly explanation; side-by-side metadata and copy kubectl commands from both runs
 - **Incident mode**: Group analyses and scans into **incidents** with a timeline; add notes; export as Markdown or JSON (deterministic, reproducible)
 - **Scheduled scans**: Create **scan schedules** (cron) for namespace or cluster; built-in APScheduler runs scans and stores results (no Redis required). Optional **notifications**: set `WEBHOOK_URL` and/or `SLACK_WEBHOOK_URL` to receive a concise message on critical/high findings (counts, top 3 findings, link to scan when `BASE_URL` is set).
+- **Reliability and explainability**: For common conditions (CrashLoopBackOff, ImagePullBackOff, Unschedulable, OOMKilled), **heuristic scoring** produces deterministic root-cause candidates with confidence. The LLM receives these and confirms or refutes with evidence; the response includes **heuristics**, **why** (evidence ref → explanation), and **uncertain** (follow-up). In the UI, **Explain reasoning** toggle expands heuristic signals, evidence mapping, and uncertain/follow-up questions.
 
 ## Roadmap
 
@@ -47,6 +48,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 - ✅ **Compare two analyses**: Select two from History → Compare; deterministic diff (pod/container/events) + LLM explanation; side-by-side metadata and copy kubectl commands
 - ✅ **Incidents**: Create incidents, add analyses/scans from history, add notes, view timeline, export Markdown/JSON
 - ✅ **Scheduled scans**: CRUD schedules (cron), APScheduler runs scans and stores results; optional webhook/Slack on critical/high
+- ✅ **Reliability and explainability (Sprint 6)**: Heuristic scoring for CrashLoopBackOff, ImagePullBackOff, ErrImagePull, Unschedulable, OOMKilled; LLM prompt includes heuristic candidates and outputs `why` (evidence mapping) and `uncertain`; **Explain reasoning** toggle in UI (heuristic signals, evidence mapping, uncertain/follow-up); GET `/api/analysis/{id}/explain` for explainability slice
 
 ### Next (v2.0 - Q2 2026)
 
@@ -266,7 +268,8 @@ With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in 
   - `tokens_used`: Number of tokens consumed by the LLM call
   - `response_time_ms`: Response time in milliseconds (displayed as seconds if ≥1000ms)
 - **GET /api/history** – List recent analyses (saved automatically to SQLite)
-- **GET /api/history/{id}** – Get one analysis by id with full details
+- **GET /api/history/{id}** – Get one analysis by id with full details (includes `analysis_json` with `heuristics`, `why`, `uncertain` when available)
+- **GET /api/analysis/{id}/explain** – Explainability slice for an analysis: `{ analysis_id, heuristics, why, uncertain }` (from stored `analysis_json`)
 - **POST /api/compare** – Body: `{ "analysis_id_a": "<uuid>", "analysis_id_b": "<uuid>" }`. Returns: `diff_summary` (markdown), `changes` (array of `{ type, path, before, after, impact }`), `likely_reasoning` (LLM explanation citing diff paths), `analysis_a` / `analysis_b` (metadata + `kubectl_commands`). Uses stored evidence and analysis_json; LLM payload is limited to diff + minimal context.
 - **POST /api/scan** – Run cluster health scan. Body: `{ "context?", "scope": "namespace"|"cluster", "namespace?" (required when scope=namespace), "include_logs?" }`. Returns: `id`, `created_at`, `summary_markdown`, `error?`, `findings[]`, `counts` (by severity), `duration_ms?`.
 - **GET /api/scans** – List recent scans (`?limit=50`).
@@ -282,6 +285,17 @@ With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in 
 - **GET /api/schedules/{id}** – Get schedule by id.
 - **PUT /api/schedules/{id}** – Update schedule (partial). Body: `{ "context?", "scope?", "namespace?", "cron?", "enabled?" }`.
 - **DELETE /api/schedules/{id}** – Delete schedule (204).
+
+## How to verify (Explainability)
+
+1. **Run an analysis** on a pod that is in a known bad state (e.g. CrashLoopBackOff, ImagePullBackOff) or use a cluster where you can create such a pod. Alternatively run any analysis; heuristics appear when evidence contains waiting/terminated reasons or FailedScheduling events.
+2. **UI:** After the result, expand **Explain reasoning**. You should see:
+   - **Heuristic signals**: Condition (e.g. CrashLoopBackOff) with evidence refs and candidate causes with confidence.
+   - **Evidence mapping**: List of `ref` → short explanation (when the LLM returns `why`).
+   - **Uncertain / follow-up questions**: Items from `uncertain` and `follow_up_questions`.
+3. **History:** Open an analysis from History; the same **Explain reasoning** toggle appears when that analysis has `heuristics` / `why` / `uncertain` / `follow_up_questions`.
+4. **API (explain slice):** `curl -s http://localhost:8000/api/analysis/<analysis_id>/explain | jq`. Expect `analysis_id`, `heuristics[]`, `why[]`, `uncertain[]`.
+5. **Tests:** `cd backend && uv run pytest tests/test_heuristics.py -v`. All 8 tests should pass (empty evidence, CrashLoopBackOff, ImagePullBackOff, ErrImagePull, OOMKilled, Unschedulable from events, rules coverage, evidence_refs in candidates).
 
 ---
 
