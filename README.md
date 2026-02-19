@@ -81,7 +81,26 @@ Releases use [standard-version](https://github.com/conventional-changelog/standa
 | `refactor:` | Code Refactoring  | `refactor: simplify scanner` |
 | `perf:`  | Performance         | `perf: cache namespace list` |
 
-Works for both Node (frontend) and Python (backend). When you run the release script (e.g. `release` or `release patch`), it runs `standard-version`, which bumps the version and updates `CHANGELOG.md` from these commits; the script then pushes the tag and creates the GitHub release. To use only the current version's notes as the release body, run `npm run release:notes` and pass the output to your release tool (e.g. `gh release create v$(node -p "require('./package.json').version") --notes-file <(npm run release:notes --silent)`). Run `npm install` in the repo root so the devDependency `standard-version` is available.
+Works for both Node (frontend) and Python (backend). When you run the release script (e.g. `npm run release` or `npm run release -- patch`), it runs `standard-version`, which bumps the version and updates `CHANGELOG.md` from these commits. To use only the current version's notes as the release body, run `npm run release:notes` and pass the output to your release tool (e.g. `gh release create v$(node -p "require('./package.json').version") --notes-file <(npm run release:notes --silent)`). Run `npm install` in the repo root so the devDependency `standard-version` is available.
+
+**Script `ship`:** Like in [elaborall](https://github.com/fgbona/elaborall) (and similar apps), `npm run ship` is wired to an external script at `/usr/local/bin/release`. That script can run `standard-version`, then create the GitHub release with **curated release notes** (e.g. from a file you maintain, or by editing `CHANGELOG.md` before the release). This avoids relying only on the one-line commit summary in the changelog. Example flow: install a `release` script at `/usr/local/bin/release` that bumps version, pushes the tag, and runs `gh release create ... --notes-file /path/to/your/notes.md`.
+
+To get **richer release notes** (e.g. for v1.2.0), either paste the block below into the GitHub release description when creating/editing the release, or replace the corresponding version block in `CHANGELOG.md` with it so `npm run release:notes` outputs the same text:
+
+<details>
+<summary>Release notes body for v1.2.0 (Incident Mode)</summary>
+
+```markdown
+### Features
+
+* **Incident Mode** — group analyses and scans into incidents with a timeline and export
+  * Backend: entities `incidents`, `incident_items` (link analyses/scans), `incident_notes`; Alembic migration
+  * API: `POST /api/incidents`, `POST /api/incidents/{id}/add`, `GET /api/incidents`, `GET /api/incidents/{id}` (timeline), `POST /api/incidents/{id}/export` (markdown/json), `POST /api/incidents/{id}/notes`
+  * Frontend: new **Incidents** tab — create incident, add analysis/scan from history, add notes, view timeline, export Markdown or JSON (deterministic)
+  * Timeline: incident creation, items (analyses/scans) and notes ordered by `created_at`
+  * Repository tests for incident CRUD and timeline
+```
+</details>
 
 ## Repository layout
 

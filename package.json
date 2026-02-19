@@ -8,8 +8,10 @@
     "url": "https://github.com/fgbona/kubebeaver"
   },
   "scripts": {
+    "build": "vite build",
     "release": "standard-version",
-    "release:notes": "node scripts/extract-release-notes.js"
+    "release:notes": "node scripts/extract-release-notes.js",
+    "ship": "/usr/local/bin/release"
   },
   "devDependencies": {
     "standard-version": "^9.5.0"

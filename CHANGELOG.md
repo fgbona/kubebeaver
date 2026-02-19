@@ -1,13 +1,15 @@
 # Changelog
-
-All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
-
 ## [1.2.0](https://github.com/fgbona/kubebeaver/compare/v1.1.0...v1.2.0) (2026-02-19)
 
 
 ### Features
 
-* Incident Mode (grouping + timeline + export) ([90ac630](https://github.com/fgbona/kubebeaver/commit/90ac630d654ac561553516679a32acf95b25de8e))
+* **Incident Mode** — group analyses and scans into incidents with a timeline and export ([90ac630](https://github.com/fgbona/kubebeaver/commit/90ac630d654ac561553516679a32acf95b25de8e))
+  * Backend: entities `incidents`, `incident_items` (link analyses/scans), `incident_notes`; Alembic migration
+  * API: `POST /api/incidents`, `POST /api/incidents/{id}/add`, `GET /api/incidents`, `GET /api/incidents/{id}` (timeline), `POST /api/incidents/{id}/export` (markdown/json), `POST /api/incidents/{id}/notes`
+  * Frontend: new **Incidents** tab — create incident, add analysis/scan from history, add notes, view timeline, export Markdown or JSON (deterministic)
+  * Timeline: incident creation, items (analyses/scans) and notes ordered by `created_at`
+  * Repository tests for incident CRUD and timeline
 
 ## [1.1.0](https://github.com/fgbona/kubebeaver/compare/v1.0.4...v1.1.0) (2026-02-18)
 
