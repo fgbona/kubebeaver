@@ -43,12 +43,20 @@ async def save_analysis(
         )
 
 
-async def list_analyses(limit: int = 50) -> list[dict[str, Any]]:
-    """List recent analyses."""
+async def list_analyses(limit: int = 50, context: str | None = None) -> list[dict[str, Any]]:
+    """List recent analyses, optionally filtered by context."""
     async_session_maker = get_session_maker()
     async with async_session_maker() as session:
         repo = HistoryRepository(session)
-        return await repo.list_analyses(limit=limit)
+        return await repo.list_analyses(limit=limit, context=context)
+
+
+async def delete_analysis(analysis_id: str) -> bool:
+    """Delete analysis by ID. Returns True if deleted, False if not found."""
+    async_session_maker = get_session_maker()
+    async with async_session_maker() as session:
+        repo = HistoryRepository(session)
+        return await repo.delete_analysis(analysis_id)
 
 
 async def get_analysis(analysis_id: str) -> dict[str, Any] | None:

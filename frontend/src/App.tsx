@@ -482,16 +482,17 @@ function App() {
 
   const loadHistory = useCallback(async () => {
     try {
-      const list = await api.history(30);
+      // Filter history by selected context
+      const list = await api.history(30, selectedContext || undefined);
       setHistory(list);
     } catch {
       setHistory([]);
     }
-  }, []);
+  }, [selectedContext]);
 
   useEffect(() => {
     loadHistory();
-  }, [loadHistory]);
+  }, [loadHistory, selectedContext]); // Reload when context changes
 
   const openHistoryDetail = async (id: string) => {
     setViewHistoryId(id);
@@ -2167,6 +2168,37 @@ function App() {
                       {new Date(h.created_at).toLocaleString()}
                     </button>
                     {h.error && <span style={{ color: "#c62828" }}>Error</span>}
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={async () => {
+                        if (
+                          confirm(`Delete analysis for ${h.kind} ${h.name}?`)
+                        ) {
+                          try {
+                            await api.historyDelete(h.id);
+                            // Remove from local state immediately
+                            setHistory((prev) =>
+                              prev.filter((item) => item.id !== h.id),
+                            );
+                            // Also remove from compare selection if selected
+                            setCompareSelectedIds((prev) =>
+                              prev.filter((id) => id !== h.id),
+                            );
+                          } catch (e) {
+                            setError(`Failed to delete: ${e}`);
+                          }
+                        }
+                      }}
+                      style={{
+                        color: "#c62828",
+                        fontSize: 12,
+                        padding: "4px 8px",
+                      }}
+                      title="Delete this analysis"
+                    >
+                      ✕
+                    </button>
                   </li>
                 ))}
               </ul>

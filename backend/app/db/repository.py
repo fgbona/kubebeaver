@@ -55,14 +55,16 @@ class HistoryRepository:
         await self.session.commit()
         return uid
 
-    async def list_analyses(self, limit: int = 50) -> list[dict[str, Any]]:
-        """List recent analyses."""
+    async def list_analyses(self, limit: int = 50, context: str | None = None) -> list[dict[str, Any]]:
+        """List recent analyses, optionally filtered by context."""
         try:
-            stmt = (
-                select(Analysis)
-                .order_by(Analysis.created_at.desc())
-                .limit(limit)
-            )
+            stmt = select(Analysis).order_by(Analysis.created_at.desc())
+            
+            # Filter by context if provided
+            if context:
+                stmt = stmt.where(Analysis.context == context)
+            
+            stmt = stmt.limit(limit)
             result = await self.session.execute(stmt)
             analyses = result.scalars().all()
             return [
@@ -93,6 +95,22 @@ class HistoryRepository:
         except Exception as e:
             logger.warning("get_analysis failed: %s", e)
             return None
+
+    async def delete_analysis(self, analysis_id: str) -> bool:
+        """Delete analysis by ID. Returns True if deleted, False if not found."""
+        try:
+            stmt = select(Analysis).where(Analysis.id == analysis_id)
+            result = await self.session.execute(stmt)
+            analysis = result.scalar_one_or_none()
+            if not analysis:
+                return False
+            await self.session.delete(analysis)
+            await self.session.commit()
+            return True
+        except Exception as e:
+            logger.warning("delete_analysis failed: %s", e)
+            await self.session.rollback()
+            return False
 
 
 class ScanRepository:
@@ -361,6 +379,22 @@ class IncidentRepository:
         self.session.add(note)
         await self.session.commit()
         return note_id
+
+    async def delete_incident(self, incident_id: str) -> bool:
+        """Delete incident by ID. Returns True if deleted, False if not found."""
+        try:
+            stmt = select(Incident).where(Incident.id == incident_id)
+            result = await self.session.execute(stmt)
+            incident = result.scalar_one_or_none()
+            if not incident:
+                return False
+            await self.session.delete(incident)
+            await self.session.commit()
+            return True
+        except Exception as e:
+            logger.warning("delete_incident failed: %s", e)
+            await self.session.rollback()
+            return False
 
 
 class ScheduleRepository:

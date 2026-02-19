@@ -195,12 +195,19 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-async function del(path: string): Promise<void> {
-  const r = await fetch(API_BASE + path, { method: "DELETE" });
+async function del<T>(path: string): Promise<T> {
+  const url = new URL(API_BASE + path, window.location.origin);
+  const r = await fetch(url.toString(), { method: "DELETE" });
   if (!r.ok) {
     const t = await r.text();
     throw new Error(t || r.statusText);
   }
+  // Handle empty response (204 No Content) or JSON response
+  const text = await r.text();
+  if (!text) {
+    return {} as T;
+  }
+  return JSON.parse(text) as T;
 }
 
 export const api = {
@@ -220,11 +227,11 @@ export const api = {
     name: string;
     include_previous_logs?: boolean;
   }) => post<AnalyzeResponse>("/analyze", body),
-  history: (limit?: number) =>
-    get<HistoryItem[]>(
-      "/history",
-      limit != null ? { limit: String(limit) } : undefined,
-    ),
+  history: (limit?: number, context?: string) =>
+    get<HistoryItem[]>("/history", {
+      ...(limit != null ? { limit: String(limit) } : {}),
+      ...(context ? { context } : {}),
+    }),
   historyGet: (id: string) =>
     get<
       HistoryItem & {
@@ -233,6 +240,7 @@ export const api = {
         evidence_summary?: string;
       }
     >(`/history/${id}`),
+  historyDelete: (id: string) => del<{ message: string }>(`/history/${id}`),
   analysisExplain: (analysisId: string) =>
     get<{
       analysis_id: string;
