@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.7.0](https://github.com/fgbona/kubebeaver/compare/v1.6.1...v1.7.0) (2026-02-19)
+
+
+### Features
+
+* Change history view by context ([f12ce75](https://github.com/fgbona/kubebeaver/commit/f12ce756d5697715821d7bb69511edb94768f3b5))
+* Changed history by context ([5ca07fb](https://github.com/fgbona/kubebeaver/commit/5ca07fbf1057160180002cd4e458fedc314b422e))
+* Ui modernization attempt ([15f9a30](https://github.com/fgbona/kubebeaver/commit/15f9a3016f9c6636899d9e94aa65c299eea3705c))
+* ui modernized ([a4182f7](https://github.com/fgbona/kubebeaver/commit/a4182f70db47a8304159e83f44fc8cce8334af02))
+
 ### [1.6.1](https://github.com/fgbona/kubebeaver/compare/v1.6.0...v1.6.1) (2026-02-19)
 
 
