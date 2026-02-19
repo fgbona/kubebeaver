@@ -83,9 +83,9 @@ Releases use [standard-version](https://github.com/conventional-changelog/standa
 | `refactor:` | Code Refactoring  | `refactor: simplify scanner` |
 | `perf:`  | Performance         | `perf: cache namespace list` |
 
-Works for both Node (frontend) and Python (backend). When you run the release script (e.g. `npm run release` or `npm run release -- patch`), it runs `standard-version`, which bumps the version and updates `CHANGELOG.md` from these commits. To use only the current version's notes as the release body, run `npm run release:notes` and pass the output to your release tool (e.g. `gh release create v$(node -p "require('./package.json').version") --notes-file <(npm run release:notes --silent)`). Run `npm install` in the repo root so the devDependency `standard-version` is available.
+Works for both Node (frontend) and Python (backend). When you run the release script (e.g. `npm run release` or `npm run release -- patch`), it runs `standard-version`, which bumps the version and updates `CHANGELOG.md` from these commits. To use only the current version's notes as the release body, run `npm run release:notes` and pass the output to your release tool. Use **`npm run version:current --silent`** (or `node scripts/version.js`) for the version—it reads from the repo root so it works even if your release script later changes directory (e.g. to `backend/`). Example: `gh release create v$(npm run version:current --silent) --notes-file <(npm run release:notes --silent)`. Run `npm install` in the repo root so the devDependency `standard-version` is available.
 
-**Script `ship`:** Like in [elaborall](https://github.com/fgbona/elaborall) (and similar apps), `npm run ship` is wired to an external script at `/usr/local/bin/release`. That script can run `standard-version`, then create the GitHub release with curated notes.
+**Script `ship`:** Like in [elaborall](https://github.com/fgbona/elaborall) (and similar apps), `npm run ship` is wired to an external script at `/usr/local/bin/release`. That script can run `standard-version`, then create the GitHub release with curated notes. **Importante:** para obter a versão e as notas, usa sempre a partir da **raiz do repo** (antes de qualquer `cd`): `npm run version:current --silent` e `npm run release:notes --silent`. Se o script fizer `cd` para outro dir (ex.: `backend/`), `require('./package.json')` falha; por isso existe `scripts/version.js`, que resolve o `package.json` pela raiz.
 
 ### Release notes ricas de uma vez por todas
 
@@ -93,8 +93,8 @@ Para que o GitHub release saia com **texto completo** (bullets, API, frontend) e
 
 1. **Antes de criar o release**, crie o ficheiro **`scripts/release-notes-current.txt`** com o markdown que quiser no corpo do release (sem cabeçalho de versão; o GitHub já mostra a tag).
 2. Gere o release com:  
-   `gh release create v$(node -p "require('./package.json').version") --notes-file <(npm run release:notes --silent)`  
-   ou use `npm run ship` se o teu script invocar `release:notes`.
+   `gh release create v$(npm run version:current --silent) --notes-file <(npm run release:notes --silent)`  
+   (usa `version:current` para obter a versão a partir da raiz do repo, mesmo que o script faça `cd` para outro dir). Ou usa `npm run ship` se o teu script invocar `release:notes`.
 3. O `extract-release-notes.js` **usa esse ficheiro em vez do CHANGELOG** quando existe e não está vazio. Depois do release podes apagar ou esvaziar o ficheiro para a próxima vez usar o CHANGELOG outra vez.
 
 Assim não precisas de editar o `CHANGELOG.md` (que pode estar protegido por hook) e manténs um único fluxo: **release-notes-current.txt** = corpo do release.
