@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.0](https://github.com/fgbona/kubebeaver/compare/v1.1.0...v1.2.0) (2026-02-19)
+
+
+### Features
+
+* Incident Mode (grouping + timeline + export) ([90ac630](https://github.com/fgbona/kubebeaver/commit/90ac630d654ac561553516679a32acf95b25de8e))
+
 ## [1.1.0](https://github.com/fgbona/kubebeaver/compare/v1.0.4...v1.1.0) (2026-02-18)
 
 
