@@ -48,7 +48,7 @@ Backend: http://localhost:8000
 
 See `k8s/rbac.yaml`. The ServiceAccount `kubebeaver` is bound to ClusterRole `kubebeaver-reader`, which allows:
 
-- get, list: namespaces, pods, pods/log, events, nodes, deployments, statefulsets
+- get, list: namespaces, pods, pods/log, events, nodes, deployments, statefulsets, daemonsets, replicasets, jobs, cronjobs
 - Optional: metrics.k8s.io pods and nodes (if metrics-server is installed)
 
 This is read-only and least privilege for the collector pipeline.
