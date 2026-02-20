@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.8.0](https://github.com/fgbona/kubebeaver/compare/v1.7.0...v1.8.0) (2026-02-20)
+
+
+### Features
+
+* add support for DaemonSet, ReplicaSet, Job, and CronJob ([1f6027a](https://github.com/fgbona/kubebeaver/commit/1f6027a2345d89db7a9bcb874c14a1482106136e))
+
+
+### Documentation
+
+* add mascot to README and update resource type documentation ([a665499](https://github.com/fgbona/kubebeaver/commit/a665499c5b68c2f701ced99d8e4a89823db6f470))
+* add mascot to README and update resource type documentation ([a19a4cd](https://github.com/fgbona/kubebeaver/commit/a19a4cdae295b6ea8d1eaf80d13f3fb03746fce2))
+
 ## [1.7.0](https://github.com/fgbona/kubebeaver/compare/v1.6.1...v1.7.0) (2026-02-19)
 
 
