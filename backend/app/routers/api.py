@@ -125,13 +125,13 @@ async def get_resources(
     kind: str = "Pod",
     context: str | None = None,
 ) -> list[ResourceItem]:
-    if kind not in ("Pod", "Deployment", "StatefulSet", "Node"):
-        raise HTTPException(status_code=400, detail="kind must be Pod, Deployment, StatefulSet, or Node")
+    if kind not in ("Pod", "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "CronJob", "Node"):
+        raise HTTPException(status_code=400, detail="kind must be Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob, or Node")
     # Convert empty strings to None
     ns = namespace if namespace and namespace.strip() else None
     ctx = context if context and context.strip() else None
     if kind != "Node" and not ns:
-        raise HTTPException(status_code=400, detail="namespace required for Pod, Deployment, StatefulSet")
+        raise HTTPException(status_code=400, detail="namespace required for namespaced resources")
     key = cache_key("resources", ctx or "", ns or "", kind)
     cached = await cache_get(key)
     if cached is not None:

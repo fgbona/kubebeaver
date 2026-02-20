@@ -11,6 +11,10 @@ class TargetKind(str, Enum):
     Pod = "Pod"
     Deployment = "Deployment"
     StatefulSet = "StatefulSet"
+    DaemonSet = "DaemonSet"
+    ReplicaSet = "ReplicaSet"
+    Job = "Job"
+    CronJob = "CronJob"
     Node = "Node"
 
 

@@ -17,12 +17,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 # Cache clients per context to avoid reloading unnecessarily
-_clients_by_context: dict[str | None, tuple[client.CoreV1Api, client.AppsV1Api]] = {}
+_clients_by_context: dict[str | None, tuple[client.CoreV1Api, client.AppsV1Api, client.BatchV1Api]] = {}
 _current_context: str | None = None
 _metrics_available: bool | None = None
 
 
-def _load_config(context: str | None = None) -> tuple[client.CoreV1Api, client.AppsV1Api]:
+def _load_config(context: str | None = None) -> tuple[client.CoreV1Api, client.AppsV1Api, client.BatchV1Api]:
     """Load Kubernetes config for a specific context and return API clients."""
     try:
         if settings.in_cluster:
@@ -34,31 +34,33 @@ def _load_config(context: str | None = None) -> tuple[client.CoreV1Api, client.A
     except ConfigException as e:
         logger.warning("Kubernetes config not available: %s", e)
         raise
-    
+
     # Create a configuration with SSL verification disabled for environments with self-signed certificates
     # This is common in internal/development environments (e.g., Rancher)
     configuration = client.Configuration.get_default_copy()
     configuration.verify_ssl = False
     configuration.ssl_ca_cert = None
-    
+
     # Create API clients with the custom configuration
-    core_v1 = client.CoreV1Api(api_client=client.ApiClient(configuration))
-    apps_v1 = client.AppsV1Api(api_client=client.ApiClient(configuration))
-    return core_v1, apps_v1
+    api_client = client.ApiClient(configuration)
+    core_v1 = client.CoreV1Api(api_client=api_client)
+    apps_v1 = client.AppsV1Api(api_client=api_client)
+    batch_v1 = client.BatchV1Api(api_client=api_client)
+    return core_v1, apps_v1, batch_v1
 
 
 def get_core_v1(context: str | None = None) -> client.CoreV1Api:
     """Get CoreV1Api client for the specified context. Creates new client if context changed."""
     global _clients_by_context
-    
+
     # Check if we already have clients for this context
     if context in _clients_by_context:
-        core_v1, _ = _clients_by_context[context]
+        core_v1, _, _ = _clients_by_context[context]
         return core_v1
-    
+
     # Load config and create new clients for this context
-    core_v1, apps_v1 = _load_config(context)
-    _clients_by_context[context] = (core_v1, apps_v1)
+    core_v1, apps_v1, batch_v1 = _load_config(context)
+    _clients_by_context[context] = (core_v1, apps_v1, batch_v1)
     logger.debug("Created new Kubernetes clients for context: %s", context)
     return core_v1
 
@@ -66,17 +68,33 @@ def get_core_v1(context: str | None = None) -> client.CoreV1Api:
 def get_apps_v1(context: str | None = None) -> client.AppsV1Api:
     """Get AppsV1Api client for the specified context. Creates new client if context changed."""
     global _clients_by_context
-    
+
     # Check if we already have clients for this context
     if context in _clients_by_context:
-        _, apps_v1 = _clients_by_context[context]
+        _, apps_v1, _ = _clients_by_context[context]
         return apps_v1
-    
+
     # Load config and create new clients for this context
-    core_v1, apps_v1 = _load_config(context)
-    _clients_by_context[context] = (core_v1, apps_v1)
+    core_v1, apps_v1, batch_v1 = _load_config(context)
+    _clients_by_context[context] = (core_v1, apps_v1, batch_v1)
     logger.debug("Created new Kubernetes clients for context: %s", context)
     return apps_v1
+
+
+def get_batch_v1(context: str | None = None) -> client.BatchV1Api:
+    """Get BatchV1Api client for the specified context. Creates new client if context changed."""
+    global _clients_by_context
+
+    # Check if we already have clients for this context
+    if context in _clients_by_context:
+        _, _, batch_v1 = _clients_by_context[context]
+        return batch_v1
+
+    # Load config and create new clients for this context
+    core_v1, apps_v1, batch_v1 = _load_config(context)
+    _clients_by_context[context] = (core_v1, apps_v1, batch_v1)
+    logger.debug("Created new Kubernetes clients for context: %s", context)
+    return batch_v1
 
 
 def list_contexts() -> list[dict[str, str]]:
@@ -116,9 +134,10 @@ def list_resources(
     namespace: str | None,
     context: str | None = None,
 ) -> list[dict[str, Any]]:
-    """List resources by kind. namespace required for Pod/Deployment/StatefulSet; optional for Node."""
+    """List resources by kind. namespace required for namespaced resources; not required for Node."""
     core = get_core_v1(context)
     apps = get_apps_v1(context)
+    batch = get_batch_v1(context)
     result: list[dict[str, Any]] = []
     try:
         if kind == "Pod":
@@ -139,6 +158,30 @@ def list_resources(
             ret = apps.list_namespaced_stateful_set(namespace=namespace, limit=500)
             for s in ret.items:
                 result.append({"name": s.metadata.name, "namespace": namespace, "kind": "StatefulSet"})
+        elif kind == "DaemonSet":
+            if not namespace:
+                return []
+            ret = apps.list_namespaced_daemon_set(namespace=namespace, limit=500)
+            for d in ret.items:
+                result.append({"name": d.metadata.name, "namespace": namespace, "kind": "DaemonSet"})
+        elif kind == "ReplicaSet":
+            if not namespace:
+                return []
+            ret = apps.list_namespaced_replica_set(namespace=namespace, limit=500)
+            for r in ret.items:
+                result.append({"name": r.metadata.name, "namespace": namespace, "kind": "ReplicaSet"})
+        elif kind == "Job":
+            if not namespace:
+                return []
+            ret = batch.list_namespaced_job(namespace=namespace, limit=500)
+            for j in ret.items:
+                result.append({"name": j.metadata.name, "namespace": namespace, "kind": "Job"})
+        elif kind == "CronJob":
+            if not namespace:
+                return []
+            ret = batch.list_namespaced_cron_job(namespace=namespace, limit=500)
+            for c in ret.items:
+                result.append({"name": c.metadata.name, "namespace": namespace, "kind": "CronJob"})
         elif kind == "Node":
             ret = core.list_node(limit=500)
             for n in ret.items:
