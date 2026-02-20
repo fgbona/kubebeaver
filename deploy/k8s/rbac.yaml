@@ -2,9 +2,9 @@
 # The backend needs to:
 # - List contexts: not applicable in-cluster (single context)
 # - List namespaces: list, get namespaces
-# - List pods/deployments/statefulsets per namespace: list, get
+# - List pods/deployments/statefulsets/daemonsets/replicasets/jobs/cronjobs per namespace: list, get
 # - List nodes: list, get nodes
-# - Read pod/deployment/statefulset/node details: get
+# - Read pod/deployment/statefulset/daemonset/replicaset/job/cronjob/node details: get
 # - List events (namespace and optional cluster): list events
 # - Read pod logs: get pods/log
 # Optional: metrics.k8s.io for pod/node metrics (best-effort)
@@ -36,9 +36,13 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list"]
-  # Deployments and StatefulSets
+  # Workload resources: Deployments, StatefulSets, DaemonSets, ReplicaSets
   - apiGroups: ["apps"]
-    resources: ["deployments", "statefulsets"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list"]
+  # Batch resources: Jobs and CronJobs
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
     verbs: ["get", "list"]
   # Optional: metrics (if metrics-server is installed)
   - apiGroups: ["metrics.k8s.io"]

@@ -6,39 +6,36 @@ export function useContexts() {
   const [selectedContext, setSelectedContext] = useState<string>("");
   const contextRef = useRef<string>("");
 
-  const loadContexts = useCallback(
-    async (preserveCurrent: boolean = false) => {
-      try {
-        const list = await api.contexts();
-        const currentSelectedContext = selectedContext;
+  const loadContexts = useCallback(async (preserveCurrent: boolean = false) => {
+    try {
+      const list = await api.contexts();
+      const currentSelectedContext = contextRef.current;
 
-        setContexts(list);
+      setContexts(list);
 
-        if (preserveCurrent && currentSelectedContext) {
-          const contextExists = list.some(
-            (c) => c.name === currentSelectedContext,
-          );
-          if (contextExists) {
-            return;
-          }
+      if (preserveCurrent && currentSelectedContext) {
+        const contextExists = list.some(
+          (c) => c.name === currentSelectedContext,
+        );
+        if (contextExists) {
+          return;
         }
-
-        const current = list.find((c) => c.current);
-        const initialContext = current ? current.name : (list[0]?.name ?? "");
-        if (initialContext) {
-          if (!currentSelectedContext || !preserveCurrent) {
-            if (initialContext !== currentSelectedContext) {
-              contextRef.current = initialContext;
-              setSelectedContext(initialContext);
-            }
-          }
-        }
-      } catch (e) {
-        console.error("Error loading contexts:", e);
       }
-    },
-    [selectedContext],
-  );
+
+      const current = list.find((c) => c.current);
+      const initialContext = current ? current.name : (list[0]?.name ?? "");
+      if (initialContext) {
+        if (!currentSelectedContext || !preserveCurrent) {
+          if (initialContext !== currentSelectedContext) {
+            contextRef.current = initialContext;
+            setSelectedContext(initialContext);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Error loading contexts:", e);
+    }
+  }, []);
 
   const handleContextChange = useCallback(async (newContext: string) => {
     contextRef.current = newContext;

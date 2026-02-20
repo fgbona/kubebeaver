@@ -1,10 +1,10 @@
-# KubeBeaver
+# <img src="logo/mascot.png" alt="KubeBeaver mascot" width="60" align="left"/> KubeBeaver
 
 KubeBeaver is an intelligent Kubernetes troubleshooting assistant. It collects cluster signals (events, describe, logs, status, and optional metrics), then uses an LLM to produce a **diagnosis**, **likely root causes**, **recommended actions**, and **suggested kubectl commands**.
 
 ## Product goal
 
-You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or Node), click **Analyze**, and get:
+You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob, or Node), click **Analyze**, and get:
 
 - A short **summary** of what is happening
 - **Likely root causes** with confidence and evidence references
@@ -15,7 +15,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 
 ## Key features
 
-- **Automatic data collection**: Gathers pod/Deployment/StatefulSet/Node details, events, logs, and status
+- **Automatic data collection**: Gathers Pod/Deployment/StatefulSet/DaemonSet/ReplicaSet/Job/CronJob/Node details, events, logs, and status
 - **LLM-powered analysis**: Uses Groq or OpenAI-compatible APIs to generate intelligent diagnostics
 - **Security**: Automatic sanitization of secrets, tokens, and sensitive data before sending to LLM
 - **Analysis history**: SQLite database (default) or MySQL/Postgres stores all analyses for review and comparison
@@ -33,7 +33,7 @@ You select a **namespace** and a **target** (Pod, Deployment, StatefulSet, or No
 
 ### Now (v1.0 - Current)
 
-- ✅ Single resource analysis (Pod, Deployment, StatefulSet, Node)
+- ✅ Single resource analysis (Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob, Node)
 - ✅ Evidence collection (events, logs, describe, status)
 - ✅ LLM-powered diagnostics (Groq, OpenAI-compatible)
 - ✅ Evidence sanitization and truncation
@@ -126,7 +126,7 @@ All settings come from `.env` in the repo root (see `.env.example`). Use `LLM_PR
 
 Analysis history is stored in the `kubebeaver-history` volume and persists across restarts.
 
-In the UI (http://localhost:8080): choose context, namespace, target type (Pod / Deployment / StatefulSet / Node), resource name, then **Analyze**. View the markdown result and expand **Raw evidence** if needed.
+In the UI (http://localhost:8080): choose context, namespace, target type (Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob, or Node), resource name, then **Analyze**. View the markdown result and expand **Raw evidence** if needed.
 
 Use the **Scan** tab to run a cluster health scan: pick scope (namespace or cluster), select a namespace when scoping to one, optionally enable **Include logs in evidence**, then **Scan**. Results show a summary with **colored severity counts** (Critical/High/Medium/Low/Info), a filterable list of findings (each with a **timestamp** for when the issue occurred), and a detail panel with **formatted, syntax-highlighted evidence** and suggested kubectl commands when you click a finding.
 
@@ -170,7 +170,7 @@ kubectl create secret generic kubebeaver-secrets -n kubebeaver \
 
 - Set `IN_CLUSTER=true` (or rely on automatic detection when `KUBERNETES_SERVICE_HOST` is set).
 - The backend uses the ServiceAccount `kubebeaver` and the ClusterRole `kubebeaver-reader`.
-- RBAC is documented in `deploy/k8s/rbac.yaml`: namespaces, pods, events, nodes, deployments, statefulsets, and optional metrics.k8s.io.
+- RBAC is documented in `deploy/k8s/rbac.yaml`: namespaces, pods, events, nodes, deployments, statefulsets, daemonsets, replicasets, jobs, cronjobs, and optional metrics.k8s.io.
 
 ---
 
@@ -222,7 +222,7 @@ With Docker Compose, Redis is included. Set `REDIS_URL=redis://redis:6379/0` in 
 - **GET /api/health** – Health and flags: `kube_connected`, `llm_configured`
 - **GET /api/contexts** – List kube contexts (or `in-cluster` when applicable)
 - **GET /api/namespaces** – List namespaces (optional `?context=...`)
-- **GET /api/resources?namespace=...&kind=Pod|Deployment|StatefulSet|Node** – List resources for the form
+- **GET /api/resources?namespace=...&kind=Pod|Deployment|StatefulSet|DaemonSet|ReplicaSet|Job|CronJob|Node** – List resources for the form
 - **POST /api/analyze** – Body: `{ "context?", "namespace?", "kind", "name", "include_previous_logs?" }`  
   Returns: `analysis_json`, `analysis_markdown`, `evidence`, `truncation_report`, `tokens_used`, `response_time_ms`, `error?`
   - `tokens_used`: Number of tokens consumed by the LLM call

@@ -27,7 +27,15 @@ import {
   type ResourceItem,
 } from "@/api";
 
-type Kind = "Pod" | "Deployment" | "StatefulSet" | "Node";
+type Kind =
+  | "Pod"
+  | "Deployment"
+  | "StatefulSet"
+  | "DaemonSet"
+  | "ReplicaSet"
+  | "Job"
+  | "CronJob"
+  | "Node";
 
 /** Tokenize JSON string for jq-style syntax highlighting */
 function tokenizeJson(text: string): { type: string; value: string }[] {
@@ -328,6 +336,10 @@ export function AnalyzePage({
                   <SelectItem value="Pod">Pod</SelectItem>
                   <SelectItem value="Deployment">Deployment</SelectItem>
                   <SelectItem value="StatefulSet">StatefulSet</SelectItem>
+                  <SelectItem value="DaemonSet">DaemonSet</SelectItem>
+                  <SelectItem value="ReplicaSet">ReplicaSet</SelectItem>
+                  <SelectItem value="Job">Job</SelectItem>
+                  <SelectItem value="CronJob">CronJob</SelectItem>
                   <SelectItem value="Node">Node</SelectItem>
                 </SelectContent>
               </Select>

@@ -37,3 +37,5 @@ Thumbs.db
 
 # SQLite (analysis history - optional to ignore in prod)
 # backend/data/kubebeaver.db
+.aider*
+.claude*
