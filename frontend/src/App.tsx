@@ -33,8 +33,7 @@ function App() {
   const [incidentList, setIncidentList] = useState<IncidentListItem[]>([]);
   const namespaceKeyRef = useRef<number>(0);
 
-  const { contexts, selectedContext, loadContexts, handleContextChange } =
-    useContexts();
+  const { contexts, selectedContext, handleContextChange } = useContexts();
 
   const { namespaces, loadNamespaces } = useNamespaces(selectedContext);
 
@@ -77,10 +76,6 @@ function App() {
   useEffect(() => {
     loadHealth();
   }, [loadHealth]);
-
-  useEffect(() => {
-    loadContexts();
-  }, [loadContexts]);
 
   useEffect(() => {
     if (selectedContext) {
