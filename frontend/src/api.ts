@@ -29,6 +29,31 @@ export type HeuristicConditionItem = {
   candidates: HeuristicCandidateItem[];
 };
 export type WhyItem = { ref: string; explanation: string };
+
+export type EngineSignals = {
+  crash_loop_back_off: boolean;
+  image_pull_back_off: boolean;
+  oom_killed: boolean;
+  unschedulable: boolean;
+  restart_count: number;
+  node_not_ready: boolean;
+  replica_mismatch: boolean;
+  warning_event_count: number;
+};
+
+export type EngineFinding = {
+  root_cause: string;
+  confidence: number;
+  signals_triggered: string[];
+  description: string;
+};
+
+export type DiagnosticEngine = {
+  signals: EngineSignals;
+  findings: EngineFinding[];
+  engine_confidence: number;
+};
+
 export type AnalysisJson = {
   summary: string;
   likely_root_causes: RootCauseItem[];
@@ -54,6 +79,7 @@ export type AnalyzeResponse = {
   tokens_used: number;
   response_time_ms: number;
   error: string | null;
+  diagnostic_engine?: DiagnosticEngine | null;
 };
 export type HistoryItem = {
   id: string;

@@ -124,6 +124,25 @@ function JsonHighlight({ text }: { text: string }) {
   );
 }
 
+function ConfidenceBadge({ value }: { value: number }) {
+  const pct = Math.round(value * 100);
+  const color =
+    pct >= 90
+      ? "bg-red-100 text-red-800 border-red-200"
+      : pct >= 70
+        ? "bg-orange-100 text-orange-800 border-orange-200"
+        : pct >= 50
+          ? "bg-yellow-100 text-yellow-800 border-yellow-200"
+          : "bg-gray-100 text-gray-700 border-gray-200";
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold border ${color}`}
+    >
+      {pct}% confidence
+    </span>
+  );
+}
+
 interface AnalyzePageProps {
   selectedContext: string;
   onContextChange: (context: string) => void;
@@ -152,6 +171,7 @@ export function AnalyzePage({
   const [error, setError] = useState<string | null>(null);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
+  const [engineOpen, setEngineOpen] = useState(false);
 
   const loadNamespaces = useCallback(
     async (forContext?: string) => {
@@ -435,6 +455,75 @@ export function AnalyzePage({
                 {result.truncation_report.total_chars_before} chars).
               </div>
             )}
+            {result.diagnostic_engine &&
+              result.diagnostic_engine.findings.length > 0 && (
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setEngineOpen(!engineOpen)}
+                    className="w-full justify-between"
+                  >
+                    <span className="flex items-center gap-2">
+                      Engine Signals
+                      <ConfidenceBadge
+                        value={result.diagnostic_engine.engine_confidence}
+                      />
+                    </span>
+                    <span>{engineOpen ? "▼" : "▶"}</span>
+                  </Button>
+                  {engineOpen && (
+                    <div className="rounded-lg border bg-muted/30 p-4 space-y-4">
+                      <section className="space-y-2">
+                        <h4 className="text-sm font-semibold">
+                          Detected signals
+                        </h4>
+                        <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+                          {Object.entries(result.diagnostic_engine.signals)
+                            .filter(
+                              ([, v]) =>
+                                v === true || (typeof v === "number" && v > 0),
+                            )
+                            .map(([k, v]) => (
+                              <li key={k}>
+                                <code className="text-xs bg-muted px-1 rounded">
+                                  {k.replace(/_/g, " ")}
+                                </code>
+                                {typeof v === "number" ? `: ${v}` : ""}
+                              </li>
+                            ))}
+                        </ul>
+                      </section>
+                      <section className="space-y-2">
+                        <h4 className="text-sm font-semibold">
+                          Engine-classified root causes
+                        </h4>
+                        <ul className="space-y-2">
+                          {result.diagnostic_engine.findings.map((f, i) => (
+                            <li
+                              key={i}
+                              className="flex items-start gap-2 text-sm"
+                            >
+                              <ConfidenceBadge value={f.confidence} />
+                              <div>
+                                <span className="font-medium">
+                                  {f.root_cause.replace(/_/g, " ")}
+                                </span>
+                                <p className="text-muted-foreground text-xs mt-0.5">
+                                  {f.description}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  Signals: {f.signals_triggered.join(", ")}
+                                </p>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    </div>
+                  )}
+                </div>
+              )}
             <div className="space-y-2">
               <Button
                 type="button"
