@@ -158,3 +158,55 @@ def test_warning_events_across_multiple_event_keys():
     }
     signals = extract_signals(evidence)
     assert signals["warning_event_count"] == 2
+
+
+def test_replica_mismatch_from_statefulset():
+    evidence = {
+        "statefulset": {
+            "spec": {"replicas": 2},
+            "status": {"readyReplicas": 0, "replicas": 2},
+        }
+    }
+    signals = extract_signals(evidence)
+    assert signals["replica_mismatch"] is True
+
+
+def test_replica_mismatch_none_spec_replicas_skipped():
+    # None spec.replicas means spec unavailable — should not produce mismatch
+    evidence = {
+        "deployment": {
+            "spec": {},
+            "status": {"readyReplicas": 0, "replicas": 3},
+        }
+    }
+    signals = extract_signals(evidence)
+    assert signals["replica_mismatch"] is False
+
+
+def test_node_not_ready_when_status_unknown():
+    # "Unknown" condition also means NotReady in Kubernetes
+    evidence = {
+        "node": {
+            "status": {
+                "conditions": [
+                    {"type": "Ready", "status": "Unknown"}
+                ]
+            }
+        }
+    }
+    signals = extract_signals(evidence)
+    assert signals["node_not_ready"] is True
+
+
+def test_node_ready_true_not_flagged():
+    evidence = {
+        "node": {
+            "status": {
+                "conditions": [
+                    {"type": "Ready", "status": "True"}
+                ]
+            }
+        }
+    }
+    signals = extract_signals(evidence)
+    assert signals["node_not_ready"] is False

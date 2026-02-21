@@ -31,7 +31,9 @@ def extract_signals(evidence: dict[str, Any]) -> dict[str, Any]:
     container_statuses = pod_status.get("containerStatuses") or []
 
     for cs in container_statuses:
-        restart_count += cs.get("restartCount") or 0
+        count = cs.get("restartCount")
+        if isinstance(count, int) and count >= 0:
+            restart_count += count
 
         state = cs.get("state") or {}
         waiting = state.get("waiting") or {}
@@ -69,7 +71,9 @@ def extract_signals(evidence: dict[str, Any]) -> dict[str, Any]:
             continue
         spec = workload.get("spec") or {}
         status = workload.get("status") or {}
-        desired = spec.get("replicas") or 0
+        desired = spec.get("replicas")
+        if desired is None:
+            continue
         ready = status.get("readyReplicas") or 0
         if desired > 0 and ready < desired:
             replica_mismatch = True
