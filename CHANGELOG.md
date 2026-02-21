@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.9.0](https://github.com/fgbona/kubebeaver/compare/v1.8.0...v1.9.0) (2026-02-21)
+
+
+### Features
+
+* **analyzer:** integrate intelligence engine into analysis pipeline ([65fdb4e](https://github.com/fgbona/kubebeaver/commit/65fdb4e4f04e96419c9f480a9b9be5144a66b5c1))
+* **frontend:** add DiagnosticEngine types and Engine Signals UI section ([93fa8a5](https://github.com/fgbona/kubebeaver/commit/93fa8a58ee15a9f4f8336c89cd24dc3f843c400e))
+* **frontend:** make engine signals visible without expanding ([7470a7d](https://github.com/fgbona/kubebeaver/commit/7470a7daeb61674280c5251dca0b1e6bce5809e0))
+* **intelligence:** add deterministic signal extraction module ([a8da7ac](https://github.com/fgbona/kubebeaver/commit/a8da7ac4099e3393b3dd208e34c932a169b8da88))
+* **intelligence:** add heuristic classifier with numeric confidence ([0b7dbbd](https://github.com/fgbona/kubebeaver/commit/0b7dbbddf0d589bd759e049a5c4012c5dc0f86a0))
+* **intelligence:** add scoring and engine orchestration ([c5ff962](https://github.com/fgbona/kubebeaver/commit/c5ff96244cfa0dbb774d9810d0b0c426540f050c))
+* **models:** add DiagnosticEngine, EngineSignals, EngineFinding to AnalyzeResponse ([b53c0d0](https://github.com/fgbona/kubebeaver/commit/b53c0d0659834cddc4e9878143ff19f060a41ee6))
+
+
+### Bug Fixes
+
+* **intelligence:** improve signals robustness and add missing edge case tests ([fa244c0](https://github.com/fgbona/kubebeaver/commit/fa244c0aeb2399ff105093e72e4000c8ac207f7d))
+
 ## [1.8.0](https://github.com/fgbona/kubebeaver/compare/v1.7.0...v1.8.0) (2026-02-20)
 
 
