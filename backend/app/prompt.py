@@ -32,9 +32,33 @@ def build_prompt(
     target_name: str,
     target_namespace: str | None,
     heuristic_conditions: list[dict[str, Any]] | None = None,
+    engine_result: dict[str, Any] | None = None,
 ) -> str:
     target_ns = target_namespace or ""
     evidence_str = json.dumps(evidence, indent=2, default=str)
+    engine_block = ""
+    if engine_result and engine_result.get("findings"):
+        pct = int(engine_result["engine_confidence"] * 100)
+        engine_block = f"\nENGINE DIAGNOSTIC (deterministic signals — {pct}% confidence):\n"
+        signals = engine_result.get("signals", {})
+        active_signals = [
+            f"  - {k}: {v}"
+            for k, v in signals.items()
+            if v is True or (isinstance(v, int) and v > 0)
+        ]
+        if active_signals:
+            engine_block += "Active signals:\n" + "\n".join(active_signals) + "\n"
+        engine_block += "\nEngine-classified root causes (backed by deterministic evidence):\n"
+        for f in engine_result["findings"]:
+            engine_block += (
+                f"  - [{f['root_cause']}] confidence={int(f['confidence'] * 100)}%: {f['description']}\n"
+            )
+        engine_block += (
+            "\nCRITICAL INSTRUCTION: The above root causes are backed by deterministic signals. "
+            "You MUST confirm or refute each with reasoning from the evidence. "
+            "You MUST NOT invent root causes that have no signal above. "
+            "You MAY add causes ONLY if directly supported by cited evidence.\n\n"
+        )
     heuristic_block = ""
     if heuristic_conditions:
         heuristic_block = "\nHEURISTIC CANDIDATES (from evidence; confirm or refute with evidence):\n"
@@ -42,7 +66,7 @@ def build_prompt(
         heuristic_block += "\n\n"
     return f"""Analyze the following Kubernetes troubleshooting evidence for {target_kind} "{target_name}" (namespace: {target_ns or 'N/A'}).
 
-{heuristic_block}{OUTPUT_SCHEMA}
+{engine_block}{heuristic_block}{OUTPUT_SCHEMA}
 
 EVIDENCE (JSON):
 {evidence_str}
