@@ -51,6 +51,30 @@ class WhyItem(BaseModel):
     explanation: str
 
 
+class EngineSignals(BaseModel):
+    crash_loop_back_off: bool = False
+    image_pull_back_off: bool = False
+    oom_killed: bool = False
+    unschedulable: bool = False
+    restart_count: int = 0
+    node_not_ready: bool = False
+    replica_mismatch: bool = False
+    warning_event_count: int = 0
+
+
+class EngineFinding(BaseModel):
+    root_cause: str
+    confidence: float
+    signals_triggered: list[str] = Field(default_factory=list)
+    description: str = ""
+
+
+class DiagnosticEngine(BaseModel):
+    signals: EngineSignals = Field(default_factory=EngineSignals)
+    findings: list[EngineFinding] = Field(default_factory=list)
+    engine_confidence: float = 0.0
+
+
 class AnalysisJson(BaseModel):
     summary: str = ""
     likely_root_causes: list[RootCauseItem] = Field(default_factory=list)
@@ -79,6 +103,7 @@ class AnalyzeResponse(BaseModel):
     tokens_used: int = 0
     response_time_ms: int = 0
     error: str | None = None
+    diagnostic_engine: DiagnosticEngine | None = None
 
 
 class ResourceItem(BaseModel):
