@@ -124,6 +124,17 @@ function JsonHighlight({ text }: { text: string }) {
   );
 }
 
+const SIGNAL_LABELS: Record<string, string> = {
+  crash_loop_back_off: "CrashLoop",
+  image_pull_back_off: "ImagePull Error",
+  oom_killed: "OOM Killed",
+  unschedulable: "Unschedulable",
+  restart_count: "Restarts",
+  node_not_ready: "Node Not Ready",
+  replica_mismatch: "Replica Mismatch",
+  warning_event_count: "Warning Events",
+};
+
 function ConfidenceBadge({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   const color =
@@ -171,7 +182,6 @@ export function AnalyzePage({
   const [error, setError] = useState<string | null>(null);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
-  const [engineOpen, setEngineOpen] = useState(false);
 
   const loadNamespaces = useCallback(
     async (forContext?: string) => {
@@ -411,9 +421,15 @@ export function AnalyzePage({
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>
+              <CardTitle className="flex items-center gap-2 flex-wrap">
                 {llmProviderLabel ? `${llmProviderLabel} – ` : ""}
                 Analysis Result
+                {result.diagnostic_engine &&
+                  result.diagnostic_engine.findings.length > 0 && (
+                    <ConfidenceBadge
+                      value={result.diagnostic_engine.engine_confidence}
+                    />
+                  )}
               </CardTitle>
               <StatPills
                 items={
@@ -443,6 +459,50 @@ export function AnalyzePage({
           </CardHeader>
           <CardContent className="space-y-4">
             {result.error && <ErrorAlert message={result.error} />}
+            {result.diagnostic_engine &&
+              result.diagnostic_engine.findings.length > 0 && (
+                <div className="rounded-lg border border-orange-200 bg-orange-50/60 p-3 space-y-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs font-semibold text-orange-900 mr-1">
+                      Signals:
+                    </span>
+                    {Object.entries(result.diagnostic_engine.signals)
+                      .filter(
+                        ([, v]) =>
+                          v === true || (typeof v === "number" && v > 0),
+                      )
+                      .map(([k, v]) => (
+                        <span
+                          key={k}
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
+                            typeof v === "boolean"
+                              ? "bg-red-100 text-red-800 border-red-200"
+                              : "bg-amber-100 text-amber-800 border-amber-200"
+                          }`}
+                        >
+                          {SIGNAL_LABELS[k] ?? k.replace(/_/g, " ")}
+                          {typeof v === "number" ? `: ${v}` : ""}
+                        </span>
+                      ))}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-semibold text-orange-900 mr-1">
+                      Root causes:
+                    </span>
+                    {result.diagnostic_engine.findings.map((f, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-1.5 text-xs"
+                      >
+                        <ConfidenceBadge value={f.confidence} />
+                        <span className="text-orange-900 font-medium">
+                          {f.root_cause.replace(/_/g, " ")}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             {result.analysis_markdown && (
               <div className="markdown-body rounded-lg border bg-muted/50 p-4">
                 <ReactMarkdown>{result.analysis_markdown}</ReactMarkdown>
@@ -455,75 +515,6 @@ export function AnalyzePage({
                 {result.truncation_report.total_chars_before} chars).
               </div>
             )}
-            {result.diagnostic_engine &&
-              result.diagnostic_engine.findings.length > 0 && (
-                <div className="space-y-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setEngineOpen(!engineOpen)}
-                    className="w-full justify-between"
-                  >
-                    <span className="flex items-center gap-2">
-                      Engine Signals
-                      <ConfidenceBadge
-                        value={result.diagnostic_engine.engine_confidence}
-                      />
-                    </span>
-                    <span>{engineOpen ? "▼" : "▶"}</span>
-                  </Button>
-                  {engineOpen && (
-                    <div className="rounded-lg border bg-muted/30 p-4 space-y-4">
-                      <section className="space-y-2">
-                        <h4 className="text-sm font-semibold">
-                          Detected signals
-                        </h4>
-                        <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
-                          {Object.entries(result.diagnostic_engine.signals)
-                            .filter(
-                              ([, v]) =>
-                                v === true || (typeof v === "number" && v > 0),
-                            )
-                            .map(([k, v]) => (
-                              <li key={k}>
-                                <code className="text-xs bg-muted px-1 rounded">
-                                  {k.replace(/_/g, " ")}
-                                </code>
-                                {typeof v === "number" ? `: ${v}` : ""}
-                              </li>
-                            ))}
-                        </ul>
-                      </section>
-                      <section className="space-y-2">
-                        <h4 className="text-sm font-semibold">
-                          Engine-classified root causes
-                        </h4>
-                        <ul className="space-y-2">
-                          {result.diagnostic_engine.findings.map((f, i) => (
-                            <li
-                              key={i}
-                              className="flex items-start gap-2 text-sm"
-                            >
-                              <ConfidenceBadge value={f.confidence} />
-                              <div>
-                                <span className="font-medium">
-                                  {f.root_cause.replace(/_/g, " ")}
-                                </span>
-                                <p className="text-muted-foreground text-xs mt-0.5">
-                                  {f.description}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  Signals: {f.signals_triggered.join(", ")}
-                                </p>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </section>
-                    </div>
-                  )}
-                </div>
-              )}
             <div className="space-y-2">
               <Button
                 type="button"
