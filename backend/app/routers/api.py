@@ -33,6 +33,9 @@ from app.models import (
     CreateScheduleRequest,
     UpdateScheduleRequest,
     ScheduleListItem,
+    DiagnosticEngine,
+    EngineSignals,
+    EngineFinding,
 )
 from app.k8s_client import list_contexts, list_namespaces, list_resources, check_connection
 from app.analyzer import run_analysis
@@ -162,7 +165,7 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
     if cached is not None:
         return AnalyzeResponse(**cached)
     try:
-        analysis_dict, evidence, trunc_report, tokens_used, response_time_ms, err = await run_analysis(
+        analysis_dict, evidence, trunc_report, tokens_used, response_time_ms, err, engine_result = await run_analysis(
             kind=req.kind.value,
             namespace=req.namespace,
             name=req.name,
@@ -180,6 +183,16 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
             response_time_ms=0,
             error=str(e),
         )
+    diagnostic_engine = None
+    if engine_result:
+        try:
+            diagnostic_engine = DiagnosticEngine(
+                signals=EngineSignals(**engine_result.get("signals", {})),
+                findings=[EngineFinding(**f) for f in engine_result.get("findings", [])],
+                engine_confidence=engine_result.get("engine_confidence", 0.0),
+            )
+        except Exception:
+            diagnostic_engine = None
     if err:
         # Still save to history with error
         await save_analysis(
@@ -222,6 +235,7 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
         tokens_used=tokens_used,
         response_time_ms=response_time_ms,
         error=None,
+        diagnostic_engine=diagnostic_engine,
     )
     await cache_set(analyze_key, response.model_dump(), settings.cache_ttl_analyze)
     return response

@@ -19,6 +19,7 @@ from app.sanitize import sanitize_evidence, truncate_evidence_for_llm
 from app.llm import get_llm_provider
 from app.prompt import SYSTEM_ROLE, build_prompt
 from app.heuristics import compute_heuristics
+from app.intelligence import analyze_with_engine
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +68,10 @@ async def run_analysis(
     name: str,
     context: str | None,
     include_previous_logs: bool,
-) -> tuple[dict[str, Any], dict[str, Any], TruncationReport, int, int, str | None]:
+) -> tuple[dict[str, Any], dict[str, Any], TruncationReport, int, int, str | None, dict[str, Any]]:
     """
     Collect evidence, sanitize, truncate, call LLM, parse response.
-    Returns (analysis_json_dict, evidence_sanitized, truncation_report, tokens_used, response_time_ms, error).
+    Returns (analysis_json_dict, evidence_sanitized, truncation_report, tokens_used, response_time_ms, error, engine_result).
     """
     evidence = collect_evidence(
         kind=kind,
@@ -83,9 +84,10 @@ async def run_analysis(
         max_pods=settings.max_pods_per_workload,
     )
     if evidence.get("error"):
-        return {}, evidence, TruncationReport(), 0, 0, evidence.get("error") or "Collection failed"
+        return {}, evidence, TruncationReport(), 0, 0, evidence.get("error") or "Collection failed", {}
 
     evidence_clean = sanitize_evidence(evidence)
+    engine_result = analyze_with_engine(evidence_clean)
     evidence_for_llm, trunc_report_dict = truncate_evidence_for_llm(
         evidence_clean,
         settings.max_evidence_chars,
@@ -107,11 +109,12 @@ async def run_analysis(
             name,
             namespace,
             heuristic_conditions=heuristic_conditions if heuristic_conditions else None,
+            engine_result=engine_result if engine_result.get("findings") else None,
         )
     )
     provider = get_llm_provider()
     if not provider.is_configured:
-        return {}, evidence_clean, trunc_report, 0, 0, "LLM provider not configured (set GROQ_API_KEY or OPENAI_BASE_URL)"
+        return {}, evidence_clean, trunc_report, 0, 0, "LLM provider not configured (set GROQ_API_KEY or OPENAI_BASE_URL)", {}
 
     start_time = time.time()
     try:
@@ -122,7 +125,7 @@ async def run_analysis(
     except Exception as e:
         logger.exception("LLM call failed: %s", e)
         response_time_ms = int((time.time() - start_time) * 1000)
-        return {}, evidence_clean, trunc_report, 0, response_time_ms, str(e)
+        return {}, evidence_clean, trunc_report, 0, response_time_ms, str(e), {}
 
     try:
         parsed = _parse_llm_json(raw_response)
@@ -181,4 +184,4 @@ async def run_analysis(
     )
     analysis_dict = analysis_json.model_dump()
     markdown = _json_to_markdown(analysis_json)
-    return analysis_dict, evidence_clean, trunc_report, tokens_used, response_time_ms, None
+    return analysis_dict, evidence_clean, trunc_report, tokens_used, response_time_ms, None, engine_result
