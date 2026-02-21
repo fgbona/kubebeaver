@@ -39,3 +39,4 @@ Thumbs.db
 # backend/data/kubebeaver.db
 .aider*
 .claude*
+uv.lock
